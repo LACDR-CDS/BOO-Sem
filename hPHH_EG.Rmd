@@ -13,6 +13,14 @@ knitr::opts_chunk$set(echo = TRUE)
 library(ggplot2)
 library(dplyr)
 ```
+```{r}
+data_dir <- "C:/Users/semde/Universiteit Leiden/BOO 2025 - BOO CDS Giulia team - BOO CDS Giulia team/3_Data/Sem/PHH_TXG-MAPr"
+expression_long   <- readRDS(file.path(data_dir, "expression_long.rds"))
+module_definition        <- readRDS(file.path(data_dir, "module_definition.rds"))
+eg_score          <- readRDS(file.path(data_dir, "eg_score.rds"))
+module_annotation <- readRDS(file.path(data_dir, "module_annotation.rds"))
+```
+
 
 
 # Distribution of Log2FC and adjusted p-value
