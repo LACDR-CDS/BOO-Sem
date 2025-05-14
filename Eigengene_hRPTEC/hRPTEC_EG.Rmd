@@ -64,7 +64,7 @@ sum(is.na(expression_long$padj))
 ```
 
 ```{r}
-sum(is.na(expression_long$padj) & !is.na(expression_long$log2fc))
+sum(is.na(expression_long$padj) & is.na(expression_long$log2fc))
 ```
 
 Still a lot of NA values, because there are nog fold change data for those genes.
