@@ -67,7 +67,7 @@ sum(is.na(expression_long$padj))
 sum(is.na(expression_long$padj) & is.na(expression_long$log2fc))
 ```
 
-Still a lot of NA values, because there are nog fold change data for those genes.
+Still a lot of NA values but there is log2FC data, because these p-values are not significant (source: Giulia). 
 
 ```{r}
 # Total number of NA genes per condition
@@ -85,12 +85,15 @@ ALl the modules still have eg_scores, even if there are missing values for padj 
 
 ## Significant genes
 
+Total statistically significant genes (padj)
+
 ```{r}
 sum(expression_long$padj <  0.05, na.rm = TRUE)
 ```
 
 ## Both Log2FC and padj significant
-Significant genes
+
+total biologically significant genes (log2fc > 1 and padj < 0.05)
 
 ```{r}
 sum(abs(expression_long$log2fc) > 1 & expression_long$padj < 0.05, na.rm = TRUE)
@@ -123,7 +126,7 @@ No NA values left
 expression_with_module <- expression_long_filtered %>%
   select(entrez_id, sample_id, log2fc, padj) %>%
   inner_join(
-    module_definition %>% select(entrez_id, module_number),
+    module_definition %>% select(entrez_id, module_number, module_size),
     by = "entrez_id"
   ) %>%
   filter(module_number != 0)  # Remove irrelevant module 0
@@ -131,34 +134,35 @@ expression_with_module <- expression_long_filtered %>%
 
 ## Calculate significant genes and total per module
 
+Determine what genes are siginificant (log2fc > 1.0 and padj < 0.05)
+
 ```{r}
 # Calculate significant genes
 expression_with_module <- expression_with_module %>%
   mutate(significant = abs(log2fc) > 1 & padj < 0.05)
-```
 
 
-```{r}
 # Count significant genes per module
 sig_count <- expression_with_module %>%
   group_by(module_number, sample_id) %>%
   summarise(sig_genes = sum(significant), .groups = "drop")
 ```
 
-```{r}
-# NA removal so the module_size variable is nog accurate anymore
-module_size_per_sample <- expression_with_module %>% 
-  group_by(module_number, sample_id) %>%
-  summarise(module_size = n(), .groups = "drop")
-```
-
-
 ## Add the module_size to sig_count and calculate GRR
 
+Divide the total significant genes by the module size
 
 ```{r}
 sig_count <- sig_count %>%
-  left_join(module_size_per_sample, by = c("module_number", "sample_id")) %>%
+  left_join(
+    expression_with_module %>%
+      distinct(module_number, module_size),
+    by = "module_number"
+  )
+```
+
+```{r}
+sig_count <- sig_count %>%
   mutate(GRR = sig_genes / module_size)
 ```
 
@@ -278,6 +282,23 @@ GRR_glm_fit_df <- GRR_glm_fit_df %>%
 ```
 
 ```{r}
+GRR_glm_fit_df <- GRR_glm_fit_df %>%
+  mutate(
+    outlier_direction = case_when(
+      outlier & z_score > 0 ~ "Above fit",
+      outlier & z_score < 0 ~ "Below fit",
+      TRUE ~ "Not significant"
+    )
+  )
+```
+
+```{r}
+GRR_glm_fit_df <- GRR_glm_fit_df %>%
+  mutate(module = paste0("hRPTECTERT1_", module_number)) %>%
+  left_join(module_annotation, by = "module")
+```
+
+```{r}
 sum(GRR_glm_fit_df$outlier, na.rm = TRUE)
 ```
 
@@ -297,11 +318,11 @@ ggplot(GRR_glm_fit_df, aes(x = abs_eg_score, y = GRR)) +
 
 ## Modules and conditions with most significant outliers'
 
-Based on the binomial GLM fit, we will now find the modules and conditions with the most significant outliers and with an abs eg_score > 2.0
+Based on the binomial GLM fit, we will now find the modules and conditions with the most significant outliers
 
 ```{r}
 significant_outliers_filtered <- GRR_glm_fit_df %>%
-  filter(outlier, abs(eg_score) > 2)
+  filter(outlier)
 ```
 
 ```{r}
@@ -318,67 +339,214 @@ outliers_per_sample <- significant_outliers_filtered %>%
 head(outliers_per_module, 10) # Top modules with outliers
 head(outliers_per_sample, 10) # Top cconditions with outliers
 ```
+### Outliers per module: total, below and above the fit with human annotation
+
+Here, we will visualize the modules with the most outliers. Total, below and above the Binomial GLM fit.
+
+#### Total outliers from the GLM fit
 
 ```{r}
-outliers_per_module %>%
-  top_n(30, n) %>%  # Top 30 modules
-  ggplot(aes(x = reorder(as.factor(module_number), n), y = n)) +
-  geom_col(fill = "steelblue") +
-  coord_flip() +
+threshold <- 300  # Same threshold
+
+GRR_glm_fit_df %>%
+  filter(outlier) %>%
+  count(module, annotation, sort = TRUE) %>%
+  slice_max(n, n = 20, with_ties = FALSE) %>%
+  mutate(
+    max_n = max(n),
+    hjust_val = ifelse(n < threshold, 0, 1.1),
+    label_pos = ifelse(n < threshold, n + 2, n - 2)
+  ) %>%
+  ggplot(aes(x = reorder(module, n))) +
+  geom_col(aes(y = max_n), fill = "grey97", width = 0.8) +
+  geom_col(aes(y = n), fill = "lavender", width = 0.8) +
+  geom_text(
+    aes(y = label_pos, label = annotation, hjust = hjust_val),
+    size = 1.8, color = "black"
+  ) +
+  coord_flip(clip = "off") +
+  scale_y_continuous(
+    limits = c(0, max(GRR_glm_fit_df %>%
+      filter(outlier) %>%
+      count(module) %>%
+      slice_max(n, n = 20, with_ties = FALSE) %>%
+      pull(n)) + 10),
+    expand = c(0, 0)
+  ) +
   theme_minimal() +
-  labs(title = "Top 30 modules with significant GRR outliers based on binomial GLM in RPTEC",
-       x = "Module number",
-       y = "Number of outliers")
-```
-
-```{r}
-outliers_per_sample %>%
-  top_n(30, n) %>%  # Top 30 conditions
-  ggplot(aes(x = reorder(sample_id, n), y = n)) +
-  geom_col(fill = "darkorange") +
-  coord_flip() +
-  theme_minimal() +
-  labs(title = "Top 30 conditions with significant GRR outliers in RPTEC",
-       x = "Condition (sample_id)",
-       y = "Number of outliers")
-```
-## Modules with most significant outliers based on binomial GLM and annotation (human)
-
-```{r}
-outliers_per_module <- outliers_per_module %>%
-  mutate(module = paste0("hRPTECTERT1_", module_number))
-```
-
-```{r}
-outliers_annotated <- outliers_per_module %>%
-  inner_join(module_annotation, by = "module")
-```
-
-```{r}
-outliers_annotated %>%
-  arrange(desc(n)) %>%
-  head(20)
-```
-Above shows the top modules with significant outliers from the GLM fit including annotation.
-
-```{r}
-outliers_annotated %>%
-  arrange(desc(n)) %>%
-  slice_head(n = 20) %>%
-  ggplot(aes(x = reorder(module, n), y = n)) +
-  geom_col(fill = "lightblue") +
-  geom_text(aes(label = annotation), hjust = 1.1, color = "black", size = 3) +
-  coord_flip() +
-  theme_minimal() +
+  theme(
+    plot.margin = margin(5.5, 100, 5.5, 5.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  ) +
   labs(
-    title = "Top 20 modules with significant GRR outliers in RPTEC",
+    title = "Top 20 modules with TOTAL significant GRR outliers (RPTEC)",
     x = "Module",
     y = "Number of significant outliers"
   )
 ```
-# Outliers per number of modules * number of samples
 
-To compare this with PHH the number of outliers will be compared relative to the total modules and conditions.
+#### Outliers above the GLM fit
+
+```{r}
+threshold <- 300  # Threshold for switching annotation position
+
+GRR_glm_fit_df %>%
+  filter(outlier_direction == "Above fit") %>%
+  count(module, annotation, sort = TRUE) %>%
+  slice_max(n, n = 20, with_ties = FALSE) %>%
+  mutate(
+    max_n = max(n),
+    hjust_val = ifelse(n < threshold, 0, 1.1),
+    label_pos = ifelse(n < threshold, n + 2, n - 2)
+  ) %>%
+  ggplot(aes(x = reorder(module, n))) +
+  geom_col(aes(y = max_n), fill = "grey97", width = 0.8) +
+  geom_col(aes(y = n), fill = "seashell", width = 0.8) +
+  geom_text(
+    aes(y = label_pos, label = annotation, hjust = hjust_val),
+    size = 3, color = "black"
+  ) +
+  coord_flip(clip = "off") +
+  scale_y_continuous(
+    limits = c(0, max(GRR_glm_fit_df %>%
+      filter(outlier_direction == "Above fit") %>%
+      count(module) %>%
+      slice_max(n, n = 20, with_ties = FALSE) %>%
+      pull(n)) + 10),
+    expand = c(0, 0)
+  ) +
+  theme_minimal() +
+  theme(
+    plot.margin = margin(5.5, 100, 5.5, 5.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  ) +
+  labs(
+    title = "Top 20 modules with outliers ABOVE the GLM fit (RPTEC)",
+    x = "Module",
+    y = "Number of outliers above fit"
+  )
+```
+
+#### Outliers below the GLM fit
+
+```{r}
+threshold <- 400  # Threshold for annotation in plot
+
+GRR_glm_fit_df %>%
+  filter(outlier_direction == "Below fit") %>%
+  count(module, annotation, sort = TRUE) %>%
+  slice_max(n, n = 20, with_ties = FALSE) %>%
+  mutate(
+    max_n = max(n),
+    hjust_val = ifelse(n < threshold, 0, 1.1),       # outside or inside
+    label_pos = ifelse(n < threshold, n + 2, n - 2)  # offset label position
+  ) %>%
+  ggplot(aes(x = reorder(module, n))) +
+  
+  # Background bar
+  geom_col(aes(y = max_n), fill = "grey97", width = 0.8) +
+  
+  # Foreground bar (actual value)
+  geom_col(aes(y = n), fill = "lemonchiffon", width = 0.8) +
+  
+  # Smart annotation positioning
+  geom_text(
+    aes(y = label_pos, label = annotation, hjust = hjust_val),
+    size = 3, color = "black"
+  ) +
+  
+  coord_flip(clip = "off") +  # Flip axes for horizontal bars
+
+  # Y-axis limits: no exessive white space
+  scale_y_continuous(limits = c(0, max(GRR_glm_fit_df %>%
+    filter(outlier_direction == "Below fit") %>%
+    count(module) %>%
+    slice_max(n, n = 20, with_ties = FALSE) %>%
+    pull(n)) + 10)) +
+
+  theme_minimal() +
+  theme(
+    plot.margin = margin(5.5, 100, 5.5, 5.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  ) +
+  labs(
+    title = "Top 20 modules with outliers BELOW the GLM fit (RPTEC)",
+    x = "Module",
+    y = "Number of outliers below fit"
+  )
+```
+
+### Outliers per sample: above, below and total.
+
+Now, we will assess what conditions have the most outliers. Total, below and above the binomial GLM fit.
+
+```{r}
+outliers_per_sample %>%
+  top_n(20, n) %>%
+  ggplot(aes(x = reorder(sample_id, n), y = n)) +
+  geom_col(fill = "darkblue") +
+  coord_flip() +
+  theme_minimal() +
+  ggtitle("Top 20 conditions with significant GRR outliers from the binomial GLM fit (RPTEC)") +
+  theme(
+    plot.title.position = "plot",
+    plot.title = element_text(hjust = 0),
+    plot.margin = margin(20, 20, 10, 40) # top, right, bottom, left
+  ) +
+  labs(
+    x = "Condition (sample_id)",
+    y = "Number of outliers"
+  )
+```
+
+```{r}
+GRR_glm_fit_df %>%
+  filter(outlier_direction == "Above fit") %>%
+  count(sample_id, sort = TRUE) %>%
+  top_n(20, n) %>%
+  ggplot(aes(x = reorder(sample_id, n), y = n)) +
+  geom_col(fill = "brown") +
+  coord_flip() +
+  theme_minimal() +
+  ggtitle("Top 20 conditions with outliers ABOVE the binomial GLM fit (RPTEC)") +
+  theme(
+    plot.title.position = "plot",
+    plot.title = element_text(hjust = 0),
+    plot.margin = margin(20, 20, 10, 40)
+  ) +
+  labs(
+    x = "Condition (sample_id)",
+    y = "Number of outliers above fit"
+  )
+```
+
+```{r}
+GRR_glm_fit_df %>%
+  filter(outlier_direction == "Below fit") %>%
+  count(sample_id, sort = TRUE) %>%
+  top_n(20, n) %>%
+  ggplot(aes(x = reorder(sample_id, n), y = n)) +
+  geom_col(fill = "slateblue") +
+  coord_flip() +
+  theme_minimal() +
+  ggtitle("Top 20 conditions with outliers BELOW the binomial GLM fit (RPTEC)") +
+  theme(
+    plot.title.position = "plot",
+    plot.title = element_text(hjust = 0),
+    plot.margin = margin(20, 20, 10, 40)
+  ) +
+  labs(
+    x = "Condition (sample_id)",
+    y = "Number of outliers below fit"
+  )
+```
+
+# Outliers per number of modules * number of samples: density of outliers for comparison with other datasets and techniques.
+
+To compare this with PHH the number of outliers will be compared relative to the total modules and conditions. Also, to have a more arbitrary number to compare with the other topology-based scoring methods
 
 ```{r}
 outlier_density <- GRR_glm_fit_df %>%
