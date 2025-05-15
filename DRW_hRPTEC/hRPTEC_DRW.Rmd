@@ -10,7 +10,369 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r}
+library(ggplot2)
+library(dplyr)
+library(tibble)
+library(future)
+library(purrr)
+library(progressr)
+```
+
+```{r}
 data_dir <- "C:/Users/semde/Universiteit Leiden/BOO 2025 - BOO CDS Giulia team - BOO CDS Giulia team/Students/Sem/Data/RPTEC_TXG-MAPr"
 adj_matrix   <- readRDS(file.path(data_dir, "RPTECTERT1_adjacencyMatrix.rds"))
+expression_long   <- readRDS(file.path(data_dir, "expression_long.rds"))
+module_definition        <- readRDS(file.path(data_dir, "module_definition.rds"))
+module_annotation <- readRDS(file.path(data_dir, "module_annotation.rds"))
+eg_score          <- readRDS(file.path(data_dir, "eg_score.rds"))
 ```
+
+# Introduction
+
+In this Rmd file, the 'basic' Directed Random Walk will be performed on the RPTEC dataset.This involves performing a random walk over the network, where nodes present genes and edges present correlations from the adjacency matrix
+
+$$
+W_{t+1} = (1 - r) A^T W_t + r W_0
+$$
+Here, the $r$ represents the restart probability, set at 0.7 (Hui et al). The $A^T$ represents the transposed row normalized adjacency matrix. The $W_t$ represents the weight of the node (gene) and the $W_0$ represents the .... $W_{t+1}$ represents .....
+
+The walker will be performed until the difference (delta) between $W_t$ and $W_{t+1}$ converges to $10^{–10}$ and this limit, the $W_{∞}$, will be obtained for each gene. Afterwards, the module activty will be calculated with the following formula:
+
+$$
+DRW(M_j) = \frac{ \sum_{i=1}^{n_j} W_\infty(g_i) \cdot \mathrm{sign}(Tscore(g_i)) \cdot Z(g_i) }{ \sqrt{ \sum_{i=1}^{n_j} \left( W_\infty(g_i) \right)^2 } }
+$$
+Here, 
+
+# Inspecting the adjacency matrix
+
+First, the adj matrix will be inspected
+
+```{r}
+dim(adj_matrix)
+head(adj_matrix[, 1:5])
+```
+
+```{r}
+min(adj_matrix)
+max(adj_matrix)
+```
+```{r}
+sum(adj_matrix[1, ])
+sum(adj_matrix[2, ])
+```
+
+adj matrix goes from ~0 to 1. and the x features have the same length as the y features, as expected due to it being an adjacency matrix. But rows are not normalized yet, this will have to be done for every module in the walker formula, resulting in the row normalized matrix $A$.
+
+
+# Removing NA Values and calculated padj from expression data
+
+As discussed in the hRPTEC_eg.Rmd file. The padj values are not calculated and will be calculated. Also, NA values will be dropped after calculating padj.
+
+```{r}
+sum(is.na(expression_long$padj)) # Na values in padj
+```
+
+```{r}
+expression_long$padj <- p.adjust(expression_long$pvalue, method = "BH")
+sum(is.na(expression_long$padj))
+```
+
+```{r}
+sum(is.na(expression_long$padj) & is.na(expression_long$log2fc))
+```
+```{r}
+expression_long_filtered <- expression_long %>%
+  filter(!is.na(padj), !is.na(log2fc)) # Remove NA values for padj and log2FC
+```
+
+```{r}
+sum(is.na(expression_long_filtered$padj))
+```
+
+# Calculating gene t-scores from p-values for the Directed Random Walker
+
+The walker requires t-scores (Hui et al), however the degrees of freedom are not known. So therefore, a different score will be used. For this the walker score will be used, which is proposed as the abs(Log2FC) * -log10(padj). To account for statistical significance and biological significance
+
+```{r}
+expression_long_filtered$walker_score <- abs(expression_long_filtered$log2fc) *
+                                         (-log10(expression_long_filtered$padj))
+```
+
+```{r}
+sum(is.na(expression_long_filtered$walker_score))
+```
+
+```{r}
+ggplot(expression_long_filtered, aes(x = walker_score)) +
+  geom_histogram(aes(y = ..density..), bins = 50, fill = "purple", alpha = 0.6) +
+  geom_density(color = "darkblue") +
+  theme_minimal() + labs(title = "Distribution of walker score in RPTEC dataset")
+```
+heavily skewed, but will be normalized in the activity calculation. But if the results do not satisfy this might be transformed.
+
+# Join the module_definition with the expression_long_filtered df
+
+The module definition will be joined with the gene expression data to assign every gene to the corresponding module for later use in the random walk.
+
+```{r}
+expression_joined <- expression_long_filtered %>%
+  left_join(module_definition %>% select(entrez_id, module_number), by = "entrez_id")
+```
+
+
+# Perform the walker on one module to learn how it works practically
+
+Before performing the walker on the whole RPTEC dataset, it will be tested on one module to assess how it works exactly. Module 273 was selected with condition LU_HRPTECTERT1_SINGLE_CITRININ_T3_C3 (random), because this module is small (5 genes) and therefore easy to visualize the weights of the individual genes
+
+```{r}
+module_nr = 100
+condition_id = "LU_HRPTECTERT1_SINGLE_CITRININ_T3_C3"
+```
+
+
+```{r}
+# Subset the module
+
+genes_in_module <- expression_joined %>%
+  filter(module_number == module_nr & sample_id == condition_id) %>%
+  pull(entrez_id)
+```
+
+
+```{r}
+# Subset adjacency matrix for this module
+
+adj_module <- adj_matrix[genes_in_module, genes_in_module]
+```
+
+
+```{r}
+# Row-normalize the adjacency matrix in the module (transition matrix A)
+diag(adj_module) <- 0
+A <- adj_module / rowSums(adj_module)
+```
+
+
+```{r}
+# 4. Create initial vector W0 from walker_score
+
+walker_score_named <- expression_joined %>%
+  filter(sample_id == condition_id, entrez_id %in% genes_in_module) %>%
+  select(entrez_id, walker_score) %>%
+  tibble::deframe()
+
+# Use absolute value and normalize to sum = 1
+W0 <- abs(walker_score_named)
+W0 <- W0 / sum(W0)
+```
+
+## Running the walker
+
+```{r}
+# Run random walk with restart
+
+r <- 0.7 # only hyperparameter, set at 0.7 (Hui et al)
+W_prev <- W0
+convergence <- data.frame(iteration = 0, delta = NA) 
+W_all <- list(W_prev)
+
+for (i in 1:1000) { 
+  W_new <- (1 - r) * t(A) %*% W_prev + r * W0
+  delta <- sum(abs(W_new - W_prev))  # L1 norm (delta weight)
+  convergence <- rbind(convergence, data.frame(iteration = i, delta = delta))
+  W_all[[i + 1]] <- W_new
+  if (delta < 1e-10) break # if the delta weight reaches this, the loop will be broken (W_inf)
+  W_prev <- W_new
+}
+
+W_inf <- as.numeric(W_new)
+names(W_inf) <- rownames(A)
+```
+
+
+```{r}
+# Visualize convergence
+
+ggplot(convergence[-1, ], aes(x = iteration, y = delta)) +
+  geom_line(color = "blue") +
+  scale_y_log10() +
+  labs(title = paste("Convergence of DRW for Module", module_nr),
+       x = "Iteration", y = "Change (L1 norm, log scale)") +
+  theme_minimal()
+```
+## Inferring pathway activity
+
+```{r}
+activity_df <- expression_joined %>%
+  filter(sample_id == condition_id,
+         entrez_id %in% names(W_inf)) %>%
+  select(entrez_id, log2fc) %>%
+  mutate(W_inf = W_inf[entrez_id],
+         term = W_inf * log2fc)
+
+numerator <- sum(activity_df$term, na.rm = TRUE)
+denominator <- sqrt(sum(activity_df$W_inf^2, na.rm = TRUE))
+pathway_activity_score <- numerator / denominator
+```
+
+
+```{r}
+# Output
+cat("DRW pathway activity score for module", module_nr, "in condition", condition_id, ":\n")
+print(pathway_activity_score)
+```
+
+```{r}
+connectivity <- rowSums(adj_module)
+
+print(
+  activity_df %>%
+    left_join(
+      expression_joined %>%
+        filter(sample_id == condition_id) %>%
+        select(entrez_id, padj),
+      by = "entrez_id"
+    ) %>%
+    mutate(connectivity = connectivity[entrez_id])
+)
+```
+
+As shown above, the genes with higher log2fc and padj contribute more to the $W_{inf}$ and therefore will contribute more to the final score. Also, the connectivty (the summed adj row) contributes to the final W_inf, as could be seen in the table above. Next, the DRW scores for all the modules and conditions will be calculated. 
+
+# Perform the walker on the whole RPTEC dataset
+
+## Function
+
+```{r}
+compute_drw_score <- function(condition_id, module_nr, expression_df, adj_matrix) {
+  # Subset the expression df for the genes in the module per sample
+  expr_sub <- expression_df %>%
+    filter(sample_id == condition_id, module_number == module_nr)
+
+  # Make sure the expr df and the adj matrix have the same genes
+  genes <- expr_sub$entrez_id[expr_sub$entrez_id %in% rownames(adj_matrix)]
+
+  # subset the matrix for the genes in the module
+  A <- adj_matrix[genes, genes, drop = FALSE]
+
+  diag(A) <- 0 # make sure there are no 1 in the adj matrix to the same gene, as the walker will then walk to itself
+  row_sums <- rowSums(A)
+  row_sums[row_sums == 0] <- 1e-10 # if the sum of the adj matrix is 0, the function will not crash
+  A <- A / row_sums # row normalize the matrix in the module
+
+  # 4. Filter expressie opnieuw op de genen in A
+  expr_sub <- expr_sub %>% filter(entrez_id %in% rownames(A))
+
+  # Earlier calculated walker score
+  W0 <- abs(expr_sub$walker_score)
+  names(W0) <- expr_sub$entrez_id
+  W0 <- W0[rownames(A)]
+
+  if (sum(W0) == 0 || any(is.na(W0))) {
+  return(tibble(condition_id = condition_id, module_nr = module_nr, drw_score = 0))
+    } # I encountered problems if the walker scores are all zero (no expression changes for the   genes), but I still want to include this in the dataset. So therefore a DRW score of 0 is returned
+  W0 <- W0 / sum(W0)
+
+  # Run walker
+  r <- 0.7
+  W_prev <- W0
+  for (i in 1:1000) {
+    W_new <- (1 - r) * t(A) %*% W_prev + r * W0
+    delta <- sum(abs(W_new - W_prev))
+    if (is.na(delta)) return(NULL)
+    if (delta < 1e-10) break # stop the loop if delta weight = < 10^10
+    W_prev <- W_new
+  }
+
+  W_inf <- as.numeric(W_new)
+  names(W_inf) <- rownames(A)
+
+  # Get log2fc for calculating the activity
+  log2fc <- expr_sub$log2fc
+  names(log2fc) <- expr_sub$entrez_id
+  log2fc <- log2fc[names(W_inf)]
+
+  term <- W_inf * log2fc
+  score <- sum(term, na.rm = TRUE) / sqrt(sum(W_inf^2, na.rm = TRUE))
+
+  tibble(condition_id = condition_id, module_nr = module_nr, drw_score = score)
+}
+```
+
+## Test the function
+
+```{r}
+drw_test_result <- compute_drw_score(
+  condition_id = condition_id,
+  module_nr = module_nr,
+  expression_df = expression_joined,
+  adj_matrix = adj_matrix
+)
+```
+
+## Inspect the test results 
+
+```{r}
+# View the head of the results
+print(head(drw_test_result))
+```
+
+This 'test' result is the same as the calculation done by hand. So now the goal is to loop over all the modules and conditions and calculate DRW scores with the function.
+
+## Perform the DRW calculation on all the modules
+
+```{r}
+module_samples <- expression_joined %>%
+  filter(module_number != 0) %>% # No Module 0
+  distinct(condition_id = sample_id, module_nr = module_number) # this chunk filters the expression df for the data that is needed
+```
+
+```{r}
+handlers("txtprogressbar") # this is to show the progress of the long calculation
+```
+
+This is a very long calculation (.... minutes on a relatively new Intel i5), so will not be knitted. I tried to parallize it, but did not work.
+
+```{r}
+with_progress({
+  p <- progressor(steps = nrow(module_samples))
+
+  drw_scores <- map_dfr(
+    1:nrow(module_samples),
+    function(i) {
+      row <- module_samples[i, ]
+      p()
+
+        tryCatch({
+        # Casting to the right data structures to be sure
+        cond_id <- as.character(row$condition_id)
+        mod_nr <- as.integer(row$module_nr)
+
+        compute_drw_score(
+          condition_id = cond_id,
+          module_nr = mod_nr,
+          expression_df = expression_joined,
+          adj_matrix = adj_matrix
+        )
+
+      }, error = function(e) {
+        message("Error With ", row$condition_id, " × ", row$module_nr, ": ", e$message)
+        return(NULL)
+      })
+    }
+  )
+})
+```
+```{r}
+print(head(drw_scores))
+```
+
+
+# Evaluate the DRW scores on the RPTEC with the GRR metric
+
+The DRW scores will be evaluated on the Gene Response Rate (GRR) metric to compare DRW to the other scoring methods. The GRR metric represents the proportion of significant genes in a module, where significant represents log2FC > 1.0 and padj < 0.05.
+
+$$
+GRR = \frac{ \displaystyle \sum_{i=1}^{n} \left( |\log_2 \mathrm{FC}_i| > 1.0 \ \land \ p_{\mathrm{adj},i} < 0.05 \right) }{ n }
+$$
 
