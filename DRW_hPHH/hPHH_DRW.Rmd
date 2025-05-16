@@ -11,15 +11,24 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r}
 library(ggplot2)
+library(data.table)
 ```
 
 ```{r}
 data_dir <- "C:/Users/semde/Universiteit Leiden/BOO 2025 - BOO CDS Giulia team - BOO CDS Giulia team/Students/Sem/Data/PHH_TXG-MAPr"
-adj_matrix <- read.table(file.path(data_dir, "adj_PHH.txt"))
+adj_matrix <- as.matrix(fread(file.path(data_dir, "adj_PHH.txt"), data.table = FALSE))
+expression_long   <- readRDS(file.path(data_dir, "expression_long.rds"))
+module_definition        <- readRDS(file.path(data_dir, "module_definition.rds"))
+module_annotation <- readRDS(file.path(data_dir, "module_annotation.rds"))
+GRR_vs_eg_score          <- readRDS(file.path(data_dir, "GRR_vs_eg_score_PHH.rds"))
 ```
 
 ```{r}
 dim(adj_matrix)
-head(adj_matrix[, 1:5])
+head(adj_matrix[, 1:20])
+```
+
+```{r}
+adj_matrix <- as.matrix(adj_matrix)
 ```
 

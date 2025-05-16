@@ -13,6 +13,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library(ggplot2)
 library(dplyr)
 ```
+
 ```{r}
 data_dir <- "C:/Users/semde/Universiteit Leiden/BOO 2025 - BOO CDS Giulia team - BOO CDS Giulia team/Students/Sem/Data/PHH_TXG-MAPr"
 expression_long   <- readRDS(file.path(data_dir, "expression_long.rds"))
@@ -127,6 +128,11 @@ Make a df with the EG_score and corresponding GRR
 ```{r}
 GRR_vs_eg_score <- sig_count %>%
   inner_join(eg_score, by = c("module_number", "sample_id"))
+```
+
+
+```{r}
+saveRDS(GRR_vs_eg_score, file = "GRR_vs_eg_score_PHH.rds")
 ```
 
 ## Density plots of GRR and EG score
