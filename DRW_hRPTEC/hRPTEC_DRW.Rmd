@@ -6,7 +6,7 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r}
@@ -286,6 +286,15 @@ A <- W_plus / rowSums(W_plus)
 sum(A[1, ])
 sum(A[2, ])
 ```
+```{r}
+print(A)
+```
+
+```{r}
+print(expr_sub)
+```
+
+The weighted directed matrix is correctly normalized. and directions are reversed.
 
 ## Defining the initial probability, based on the 'walker score'
 
@@ -307,11 +316,6 @@ The initial probability will be assigned on the earlier calculated walker score.
   # Fill W0 only for significant genes
   W0[names(W0_sig)] <- abs(W0_sig)
   
-  # Security: no zeros
-  if (sum(W0) == 0 || any(is.na(W0))) {
-    return(tibble(condition_id = condition_id, module_nr = module_nr, drw_score = 0))
-  }
-  
   # Normalization
   W0 <- W0 / sum(W0)
   
@@ -324,6 +328,7 @@ print(W0)
 print(expr_sub$walker_score)
 ```
 
+a higher walker score recieves a higher W0. Non significant genes (padj<0.05) are correctly filtered out
 
 ## Running the walker
 
@@ -350,9 +355,11 @@ names(W_inf) <- rownames(A)
 
 ```{r}
 print(summary(W_inf)) 
-print(W_inf)
-print(expr_sub$padj)
 ```
+```{r}
+print(W_inf)
+```
+Above shows the final weights of the walker.
 
 ### Distributing the final weight of the ground node
 
@@ -364,6 +371,10 @@ if ("GROUND" %in% names(W_inf)) {
   W_inf <- W_inf[names(W_inf) != "GROUND"]
   W_inf <- W_inf + ground_mass / length(W_inf)
 }
+```
+
+```{r}
+print(W_inf)
 ```
 
 
@@ -386,7 +397,7 @@ ggplot(convergence[-1, ], aes(x = iteration, y = delta)) +
   theme_minimal()
 ```
 
-As shown above, the L1-norm decreases after iterations, making the walker converge.
+As shown above, the L1-norm decreases after iterations, making the recursive walker converge to the base case (L1-norm 10^-10). 
 
 ### Visualizations of the weight vectors
 
@@ -428,11 +439,11 @@ ggplot(mean_df, aes(x = iteration, y = mean_score)) +
 
 ```
 
-Above could be seen how the weight vectors change. It is shown that the W_t vector converges to a stable value, which is below the W0 vector.
+Above could be seen how the weight vectors change. It is shown that the W_t vector converges to a stable value, which is below the W0 vector in this case.
 
 ## Inferring pathway activity
 
-Calculate the activity of the module with the output $W_{∞}$ for the genes. Only genes with an adjusted p-value < 0.05 will be used in the calculation. Also, the abs value of the log2fc is used, because otherwise the activity score will get canceled out.
+Calculate the activity of the module with the output $W_{∞}$ for the genes. Only genes with an adjusted p-value < 0.05 will be used in the calculation. Also, the abs value of the log2fc is used, because otherwise the activity score will get canceled out (became clear when running on a subset).
 
 ```{r}
 activity_df <- expression_joined %>%
@@ -470,7 +481,7 @@ print(
 )
 ```
 
-Above shows the genes that were used in the activity calculation. The connectivity column is the sum of the TOM rows. A higher connectivity resulted in a higher W_inf, as expected. Term is $W_{∞}$ * log2fc.  
+Above shows the genes that were used in the activity calculation. The connectivity column is the sum of the TOM rows. A higher connectivity resulted in a higher W_inf, as expected. Term is $W_{∞}$ * abs log2fc.  
 
 # Perform the walker on the whole RPTEC dataset
 
@@ -635,7 +646,7 @@ module_samples <- expression_joined %>%
 handlers("txtprogressbar") # this is to show the progress of the long calculation
 ```
 
-This is a very long calculation (~ 120 minutes on my local CPU (a relatively new Intel i5)), so will not be knitted. I tried to parallize it, but did not work. Probably due to not having enough RAM (8 GB) relative to the size of the data.
+This is a long calculation for the RPTEC dataset (~ 120 minutes on my local CPU (a relatively new Intel i5)), so will not be knitted. I tried to parallize it, but did not work. Probably due to not having enough RAM (8 GB) relative to the size of the data.
 
 ```{r, eval=FALSE}
 with_progress({
@@ -691,7 +702,7 @@ No NA values
 
 ### Normalization
 
-The DRW scores will be normalized for their module_size.
+The DRW scores will be normalized for their module_size and called the drw_zscore (it is not really a z-score but this is for simplification)
 
 ```{r}
 drw_scores <- drw_scores %>%
@@ -758,9 +769,10 @@ min(GRR_vs_DRW$wGRR)
 ```
 
 ```{r}
-#saveRDS(GRR_vs_DRW, file = "GRR_vs_DRW_cor_eg.rds") # saving the wGRR for other scoring methods
+#saveRDS(GRR_vs_DRW, file = "GRR_vs_DRW_cor_eg.rds") # saving the wGRR for other RPTEC scoring methods
 ```
 
+The wGRR has a reach of 0 to 1 (will never reach one practically, due to cor_eg), as expected.
 
 ## Density plots of GRR and DRW score
 
@@ -768,17 +780,18 @@ min(GRR_vs_DRW$wGRR)
 ggplot(GRR_vs_DRW, aes(x = wGRR)) +
   geom_histogram(aes(y = ..density..), bins = 50, fill = "green", alpha = 0.6) +
   geom_density(color = "black") +
-  theme_minimal() + labs(title = "Distribution of Gene Response Rate in RPTEC dataset")
+  theme_minimal() + labs(title = "Distribution of Weighted Gene Response Rate (wGRR) in RPTEC dataset")
 ```
+
 Like expected, the wGRR shows a logaritmic distribution due to the count data nature.
 
 ```{r}
 ggplot(GRR_vs_DRW, aes(x = drw_zscore)) +
   geom_histogram(aes(y = ..density..), bins = 50, fill = "red", alpha = 0.6) +
   geom_density(color = "black") +
-  theme_minimal() + labs(title = "Distribution of DRW zScore in RPTEC dataset")
+  theme_minimal() + labs(title = "Distribution of DRW score in RPTEC dataset")
 ```
-DRW_zscore also logarithmic distributed due to using the abs(log2fc) in the pathway activity inference
+DRW score also logarithmic distributed due to using the abs(log2fc) in the pathway activity inference
 
 ## Visualize GRR vs DRW score with a linear fit
 
@@ -788,12 +801,12 @@ ggplot(GRR_vs_DRW, aes(x = drw_zscore, y = wGRR)) +
   geom_smooth(method = "lm", se = FALSE, color = "blue") +
   theme_minimal() +
   labs(
-    title = "Gene Response Rate vs DRW Score in RPTEC",
-    x = "Directed Random Walk score (DRW)",
-    y = "Gene Response Rate (GRR)"
+    title = "Weighted Gene Response Rate (wGRR) vs DRW Score in RPTEC",
+    x = "Weighted Directed Random Walk score (wDRW)",
+    y = "Weighted Gene Response Rate (wGRR)"
   )
 ```
-
+The linear fit does not fit the data well visually, so a binomial glm will be fitted and outliers will be calculated from this fit.
 
 ## Binomial Generalized Linear Model (GLM)
 
@@ -832,11 +845,13 @@ ggplot(GRR_glm_fit_df, aes(x = drw_zscore, y = wGRR)) +
   geom_line(aes(y = fitted_sig_genes / module_size), color = "blue", size = 1) +
   theme_minimal() +
   labs(
-    title = "Binomial GLM fit: GRR vs Eigengene Score in RPTEC",
-    x = "Eigengene Score",
-    y = "Gene Response Rate (GRR)"
+    title = "Binomial GLM fit: wGRR vs DRW in RPTEC",
+    x = "Weighted Directed Random Walk Score (wDRW)",
+    y = "Weighted Gene Response Rate (wGRR)"
   )
 ```
+
+Visually, there are less outlying points using the DRW score than using the abs Eigengene score.
 
 ```{r}
 summary(glm_fit)
@@ -888,7 +903,7 @@ GRR_glm_fit_df <- GRR_glm_fit_df %>%
 ```{r}
 sum(GRR_glm_fit_df$outlier, na.rm = TRUE)
 ```
-
+There are 7134 outliers found. This is less than the eg score.
 
 ```{r}
 ggplot(GRR_glm_fit_df, aes(x = drw_zscore, y = wGRR)) +
@@ -897,16 +912,16 @@ ggplot(GRR_glm_fit_df, aes(x = drw_zscore, y = wGRR)) +
   scale_color_manual(values = c("black", "red")) +
   theme_minimal() +
   labs(
-    title = "GRR vs DRW Score with Significant Outliers in RPTEC",
-    x = "Directed Random Walk Score (DRW)",
-    y = "Gene Response Rate (GRR)"
+    title = "wGRR vs DRW Score with Significant Outliers in RPTEC",
+    x = "Weighted Directed Random Walk Score (wDRW)",
+    y = "Weighted Gene Response Rate (wGRR)"
   )
 ```
-This fit shows, visually, less over and under quantification compared to the EG. especially the high EG scores (overquantification) with 0 gene responses are not present. However, the fit still shows some underquantification
+This fit shows, visually, less over and under quantification compared to the EG. especially the high EG scores (overquantification) with 0 gene responses are not present. However, the fit still shows some underquantification. But overall, this scoring shows less randomness than the eg scoring method in the proposed 
 
 ## Modules and conditions with most significant outliers'
 
-Based on the binomial GLM fit, we will now find the modules and conditions with the most significant outliers
+Based on the binomial GLM fit, we will now find the modules and conditions with the most significant outliers. Total, above and below the fit.
 
 ```{r}
 significant_outliers_filtered <- GRR_glm_fit_df %>%
@@ -927,6 +942,8 @@ outliers_per_sample <- significant_outliers_filtered %>%
 head(outliers_per_module, 10) # Top modules with outliers
 head(outliers_per_sample, 10) # Top cconditions with outliers
 ```
+Interestingly, other modules and conditions are now found to be the top outliers than the ones found by the eigengene score analysis.
+
 ### Outliers per module: total, below and above the fit with human annotation
 
 Here, we will visualize the modules with the most outliers. Total, below and above the Binomial GLM fit.
@@ -968,7 +985,7 @@ GRR_glm_fit_df %>%
     panel.grid.minor = element_blank()
   ) +
   labs(
-    title = "Top 20 modules with TOTAL significant GRR outliers (RPTEC) (DRW)",
+    title = "Top 20 modules with TOTAL significant GRR outliers (RPTEC) (wDRW)",
     x = "Module",
     y = "Number of significant outliers"
   )
@@ -1011,7 +1028,7 @@ GRR_glm_fit_df %>%
     panel.grid.minor = element_blank()
   ) +
   labs(
-    title = "Top 20 modules with outliers ABOVE the GLM fit (RPTEC) (DRW)",
+    title = "Top 20 modules with outliers ABOVE the GLM fit (RPTEC) (wDRW)",
     x = "Module",
     y = "Number of outliers above fit"
   )
@@ -1061,7 +1078,7 @@ GRR_glm_fit_df %>%
     panel.grid.minor = element_blank()
   ) +
   labs(
-    title = "Top 20 modules with outliers BELOW the GLM fit (RPTEC) (DRW)",
+    title = "Top 20 modules with outliers BELOW the GLM fit (RPTEC) (wDRW)",
     x = "Module",
     y = "Number of outliers below fit"
   )
@@ -1078,7 +1095,7 @@ outliers_per_sample %>%
   geom_col(fill = "darkblue") +
   coord_flip() +
   theme_minimal() +
-  ggtitle("Top 20 conditions with significant GRR outliers from the binomial GLM fit (RPTEC) (DRW)") +
+  ggtitle("Top 20 conditions with significant wGRR outliers (RPTEC) (wDRW)") +
   theme(
     plot.title.position = "plot",
     plot.title = element_text(hjust = 0),
@@ -1115,12 +1132,12 @@ GRR_glm_fit_df %>%
 GRR_glm_fit_df %>%
   filter(outlier_direction == "Below fit") %>%
   count(sample_id, sort = TRUE) %>%
-  top_n(20, n) %>%
+  slice_max(n, n = 20, with_ties = FALSE) %>%
   ggplot(aes(x = reorder(sample_id, n), y = n)) +
   geom_col(fill = "slateblue") +
   coord_flip() +
   theme_minimal() +
-  ggtitle("Top 20 conditions with outliers BELOW the binomial GLM fit (RPTEC) (DRW)") +
+  ggtitle("Top 20 conditions with outliers BELOW the binomial GLM fit (RPTEC) (wDRW)") +
   theme(
     plot.title.position = "plot",
     plot.title = element_text(hjust = 0),
@@ -1180,4 +1197,4 @@ print(outlier_density)
 
 # Conclusion
 
-The DRW shows less outliers and a more 'robust' fit than the EG score. Especially the overquantification is fixed. The underquantification could be better and this will be further assessed by the other topology based scoring methods.
+The wDRW shows less outliers and a more 'robust' fit than the EG score on the wGRR metric. This will be further improved by other DRW variants that weight the topological importance even more. (s-DRW and e-DRW)
