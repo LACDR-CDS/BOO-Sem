@@ -679,9 +679,6 @@ with_progress({
 })
 ```
 
-```{r}
-#saveRDS(drw_scores, file = "drw_scores_RPTEC_directed.rds") # saving the drw_scores
-```
 
 ```{r}
 drw_scores          <- readRDS(file.path(data_dir, "drw_scores_RPTEC_directed.rds")) # reading the drw_scores
@@ -718,6 +715,10 @@ drw_scores <- drw_scores %>%
 ```{r}
 sum(is.na(drw_scores$drw_zscore))
 ```
+```{r}
+#saveRDS(drw_scores, file = "drw_scores_RPTEC_directed.rds") # saving the drw_scores
+```
+
 
 No NA values
 

@@ -1,0 +1,98 @@
+---
+title: "Pubmed Text Mining"
+author: "Sem"
+date: "2025-05-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(rentrez)
+library(xml2)
+library(dplyr)
+library(pubmed.mineR)
+```
+
+```{r}
+data_dir <- "C:/Users/semde/Documents/BOO_Scripts/Data/RPTEC_TXG-MAPr"
+drw_scores   <- readRDS(file.path(data_dir, "drw_scores_RPTEC_directed.rds"))
+module_annotation <- readRDS(file.path(data_dir, "module_annotation.rds"))
+GRR_vs_eg_score <- readRDS(file.path(data_dir, "GRR_vs_eg_score_RPTEC.rds"))
+```
+
+# Introduction
+
+This is a script to assess if this literature validation way would be possible without bias. It is still to be decided if this will be included in the final report.
+
+The goal would be to validate the scoring methods in the literature by performing pubmed text mining on the top k identified pathways of the scoring methods. The number of hits would be evaluated of the experimental condition with the annotation. An other option is to use Natural Language Processing (NLP) tools for this to identify relationships between the condition and annotation and score.
+
+# Adding module annotation to scoring methods
+
+```{r}
+module_annotation$module_number <- as.integer(gsub("hRPTECTERT1_", "", module_annotation$module))
+module_annotation$module_nr <- as.integer(gsub("hRPTECTERT1_", "", module_annotation$module)) # Some scoring datasets have module_nr and some module_number
+```
+
+## EG
+
+```{r}
+eg_joined <- merge(GRR_vs_eg_score, module_annotation, by = "module_number")
+```
+
+## DRW
+
+```{r}
+drw_joined <- merge(drw_scores, module_annotation, by = "module_nr")
+```
+
+
+# Printing the top modules with definition
+
+## EG
+
+```{r}
+k <- 20 
+top_k_modules_eg <- eg_joined %>%
+  arrange(desc(abs_eg_score)) %>%
+  slice_head(n = k) %>% 
+  select(abs_eg_score, sample_id, module_number, annotation)
+
+print(top_k_modules_eg)
+```
+
+
+## DRW
+
+```{r}
+k <- 20 
+top_k_modules_drw <- drw_joined %>%
+  arrange(desc(drw_zscore)) %>%
+  slice_head(n = k) %>% 
+  select(drw_zscore, condition_id, module_number, annotation)
+
+print(top_k_modules_drw)
+```
+
+
+# Ddd
+
+```{r}
+condition <- "ARISTOLOCHICACID"
+pathway   <- "immune"
+query <- paste0("\"", condition, "\"[TIAB] AND \"", pathway, "\"[TIAB]")
+query
+```
+[TIAB] means Title and Abstract.
+
+```{r}
+res <- entrez_search(db="pubmed", term=query, retmax=0)
+cooccurrence_count <- res$count
+cooccurrence_count
+```
+
+
+
+
