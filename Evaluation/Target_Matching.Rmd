@@ -1,0 +1,291 @@
+---
+title: "CTD Validation"
+author: "Sem"
+date: "2025-05-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(readr)
+library(dplyr)
+library(stringr)
+```
+
+# Introduction
+
+In this .Rmd file. The top k scoring modules for the different scoring algorithms and conditions will be enriched using KEGG and Reactome and then there will be assessed if these significant module enrichments have a match with the CTD database for the certain conditions. This is done to assess the biological accuracy of the proposed scoring methods.
+
+## CTD data
+
+```{r}
+data_dir <- "C:/Users/semde/Documents/BOO_Scripts/Data/Evaluation"
+CTD_Pathways <- read_csv(
+  file.path(data_dir, "CTD_Pathways_enriched.csv"),
+  skip = 27,
+  show_col_types = FALSE
+)
+```
+
+## PHH data
+
+```{r}
+data_dir <- "C:/Users/semde/Documents/BOO_Scripts/Data/PHH_TXG-MAPr"
+module_enrichment_PHH   <- readRDS(file.path(data_dir, "module_enrichment.rds"))
+drw_scores_PHH <- readRDS(file.path(data_dir, "drw_scores_PHH_directed.rds"))
+eg_scores_PHH <- readRDS(file.path(data_dir, "eg_score.rds"))
+#sdrw_scores_PHH <- readRDS(file.path(data_dir, "sdrw_scores_PHH_directed.rds"))
+
+```
+
+## RPTEC data
+
+```{r}
+data_dir <- "C:/Users/semde/Documents/BOO_Scripts/Data/RPTEC_TXG-MAPr"
+module_enrichment_RPTEC   <- readRDS(file.path(data_dir, "module_enrichment.rds"))
+drw_scores_RPTEC <- readRDS(file.path(data_dir, "drw_scores_RPTEC_directed.rds"))
+eg_scores_RPTEC <- readRDS(file.path(data_dir, "eg_score.rds"))
+#sdrw_scores_RPTEC <- readRDS(file.path(data_dir, "sdrw_scores_RPTEC_directed.rds"))
+```
+
+# Preprocessing
+
+## CTD
+
+First row has NA due to weird csv
+
+```{r}
+CTD_Pathways_clean <- CTD_Pathways[-1, ]
+```
+
+TXG-MAPr has no KEGG so only Reactome will be used
+
+```{r}
+CTD_Pathways_reactome <- CTD_Pathways_clean %>%
+  filter(str_starts(PathwayID, "REACT:")) %>% 
+  filter(CorrectedPValue < 0.05)
+```
+
+```{r}
+glimpse(CTD_Pathways_reactome)
+```
+Filter the reactome code out of the Pathwayname for matching with the RPTEC dataset
+
+```{r}
+CTD_Pathways_reactome <- CTD_Pathways_reactome %>%
+  mutate(reactome_id = str_extract(PathwayID, "R-HSA-\\d+"))
+```
+
+
+## PHH
+
+### enrichment df
+
+Only include significantly enriched terms
+
+```{r}
+module_enrichment_PHH <- module_enrichment_PHH %>%
+  filter(padj < 0.05)
+```
+
+```{r}
+unique(module_enrichment_PHH$source)
+```
+Filter for only reactome terms
+
+```{r}
+module_enrichment_PHH_reactome <- module_enrichment_PHH %>%
+  filter(source == "CPDB:Reactome")
+```
+
+get the module_number
+
+```{r}
+module_enrichment_PHH_reactome <- module_enrichment_PHH_reactome %>%
+  mutate(module_number = str_remove(module, "^hPHH_"),
+         module_number = as.integer(module_number))
+```
+
+
+### eg_score df
+
+```{r}
+eg_scores_PHH <- eg_scores_PHH %>%
+  mutate(chemical = str_extract(sample_id, "(?<=TG_HPHH_SINGLE_)[^_]+")) %>% 
+  select(abs_eg_score, chemical, module_number)
+```
+
+### drw_score df
+
+```{r}
+drw_scores_PHH <- drw_scores_PHH %>%
+  mutate(chemical = str_extract(condition_id, "(?<=TG_HPHH_SINGLE_)[^_]+")) %>% 
+  mutate(module_number=module_nr) %>%
+  select(chemical, drw_zscore, module_number)
+  
+```
+
+
+## RPTEC
+
+```{r}
+module_enrichment_RPTEC <- module_enrichment_RPTEC %>%
+  filter(padj < 0.05)
+```
+
+```{r}
+unique(module_enrichment_RPTEC$source)
+```
+
+Filter for only reactome terms
+
+```{r}
+module_enrichment_RPTEC_reactome <- module_enrichment_RPTEC %>%
+  filter(source == "Reactome_2022")
+```
+
+```{r}
+module_enrichment_RPTEC_reactome <- module_enrichment_RPTEC_reactome %>%
+  mutate(term_id = str_extract(term, "R-HSA-\\d+"))
+```
+
+get the module number
+
+```{r}
+module_enrichment_RPTEC_reactome <- module_enrichment_RPTEC_reactome %>%
+  mutate(module_number = str_remove(module, "^hRPTECTERT1_"),
+         module_number = as.integer(module_number))
+```
+
+
+### eg_score df
+
+```{r}
+eg_scores_RPTEC <- eg_scores_RPTEC %>%
+  mutate(chemical = str_extract(sample_id, "(?<=LU_HRPTECTERT1_SINGLE_)[^_]+")) %>% 
+  select(abs_eg_score, chemical, module_number)
+```
+
+### drw_score df
+
+```{r}
+drw_scores_RPTEC <- drw_scores_RPTEC %>%
+  mutate(chemical = str_extract(condition_id, "(?<=LU_HRPTECTERT1_SINGLE_)[^_]+")) %>% 
+  mutate(module_number=module_nr) %>%
+  select(chemical, drw_zscore, module_number)
+  
+```
+
+# Seeing if there are matches
+
+To see if this analysis is possible, it was first checked to see if there are matches.
+
+For PHH matching needs to be done on strings, which makes it less good. But there are no code available. 
+
+```{r}
+# 1. Extract the two name‐vectors
+ctd_names   <- CTD_Pathways_reactome$PathwayName
+phh_names   <- module_enrichment_PHH_reactome$term
+
+# 2. Find exact overlaps
+common_names <- intersect(ctd_names, phh_names)
+
+# 3. Subset the enrichment table to only those matches
+matches_df_PHH <- module_enrichment_PHH %>%
+  filter(term %in% common_names)
+```
+
+```{r}
+nrow(matches_df_PHH)
+```
+For RPTEC matching could be done on R-HSA code.
+
+```{r}
+ctd_ids   <- CTD_Pathways_reactome$reactome_id
+rptec_ids <- module_enrichment_RPTEC_reactome$term_id
+
+# Find common id
+common_ids <- intersect(ctd_ids, rptec_ids)
+
+matches_df_RPTEC <- module_enrichment_RPTEC_reactome %>%
+  filter(term_id %in% common_ids)
+```
+
+```{r}
+nrow(matches_df_RPTEC)
+```
+
+
+The analysis seems possible as there are string matches between the CTD database and the PHH TXG-MAPr enrichment. And reactome_id matches between the RPTEC TXG-MAPr enrichment and PHH TXG-MAPr enrichment. It is noteable that there are less matches between the strings. THis could be an indication that the enrichment should be done again. But for now, not enough time. 
+
+# PHH analysis
+
+## Preprocessing (again)
+
+First, the chemicals from TXG-MAPr have to match the chemical for the CTD database. This was manually done for the top k pathways
+
+### Arranging the CTD
+
+arranging the ctd database for manual mapping of the chemicals.
+
+```{r}
+CTD_chemicals_unique <- CTD_Pathways_reactome %>%
+  arrange(`# ChemicalName`) %>%
+  distinct(`# ChemicalName`, .keep_all = TRUE)
+```
+
+
+### eg_score
+
+```{r}
+eg_scores_PHH %>%
+  arrange(desc(abs_eg_score)) %>%
+  head(20)
+```
+
+```{r}
+eg_scores_PHH <- eg_scores_PHH %>%
+  mutate(chemical_ctd = case_when(
+    chemical == "DOXORUBICIN"     ~ "Doxorubicin",
+    chemical == "PAPAVERINE"  ~ "Papaverin",
+    chemical == "VALPROICACID"    ~ "Valproicacid",
+    chemical == "CYCLOHEXIMIDE"    ~ "Cycloheximide",
+    chemical == "INTERFERONALPHAHUMAN" ~ "Interferon-alpha",
+    chemical == "TRANSFORMINGGROWTHFACTORBETA1" ~ "Transforming Growth Factor beta1",
+    chemical == "ETHIONINE" ~ "Ethionine",
+    chemical == "PHENOBARBITAL" ~ "Phenobarbital",
+    TRUE ~ chemical  # fallback to original if no match
+  ))
+```
+
+```{r}
+eg_scores_PHH %>%
+  arrange(desc(abs_eg_score)) %>%
+  head(20)
+```
+
+```{r}
+modules_with_scores <- module_enrichment_PHH %>%
+  inner_join(eg_scores_PHH, by = "module_nr")
+```
+
+
+### drw_score
+
+```{r}
+drw_scores_PHH %>%
+  arrange(desc(drw_zscore)) %>%
+  head(20)
+```
+
+
+
+# Inlezen
+ctd <- read_csv(path)
+
+# Bekijken
+
+

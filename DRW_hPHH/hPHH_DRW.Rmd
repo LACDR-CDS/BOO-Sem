@@ -91,15 +91,15 @@ adj matrix goes from ~0 to 1. and the x features have the same length as the y f
 The TOM will be calculated to weight the directions of the graphs. 
 
 ```{r}
-TOM <- TOMsimilarity(adj_matrix)
+#TOM <- TOMsimilarity(adj_matrix)
 ```
 
 ```{r}
-dimnames(TOM) <- dimnames(adj_matrix)
+#dimnames(TOM) <- dimnames(adj_matrix)
 ```
 
 ```{r}
-#TOM   <- readRDS(file.path(data_dir, "TOM_PHH.rds"))
+TOM   <- readRDS(file.path(data_dir, "TOM_PHH.rds"))
 ```
 
 
@@ -675,12 +675,9 @@ with_progress({
 })
 ```
 
-```{r}
-saveRDS(drw_scores, file = "drw_scores_PHH_directed.rds") # saving the drw_scores
-```
 
 ```{r}
-#drw_scores          <- readRDS(file.path(data_dir, "drw_scores_RPTEC_directed.rds")) # reading the drw_scores
+drw_scores          <- readRDS(file.path(data_dir, "drw_scores_PHH_directed.rds")) # reading the drw_scores
 ```
 
 
@@ -703,11 +700,11 @@ The DRW scores will be normalized for their module_size.
 ```{r}
 drw_scores <- drw_scores %>%
   left_join(
-    GRR_vs_eg_score %>% select(sample_id, module_number, module_size),
+    GRR_vs_eg_score %>% select(sample_id, module_number, module_size.x),
     by = c("condition_id" = "sample_id", "module_nr" = "module_number")
   ) %>%
   mutate(
-    drw_zscore = drw_score / module_size
+    drw_zscore = drw_score / module_size.x
   )
 ```
 
@@ -717,7 +714,12 @@ sum(is.na(drw_scores$drw_zscore))
 
 No NA values
 
-# Evaluate the DRW scores on the RPTEC with the wGRR metric
+```{r}
+saveRDS(drw_scores, file = "drw_scores_PHH_directed.rds") # saving the drw_scores
+```
+
+
+# Evaluate the DRW scores on the PHH with the wGRR metric
 
 The DRW scores will be evaluated on the Weighted Gene Response Rate (wGRR) metric to compare DRW to the other scoring methods. The wGRR metric represents the proportion of weighted significant genes in a module, where significant represents log2FC > 1.0 and padj < 0.05 * cor_eg. This metric is therefore proposed as an evaluation metric for topological activation of a module.
 
@@ -739,21 +741,24 @@ GRR_vs_DRW <- GRR_vs_eg_score %>%
 ## wGRR
 
 ```{r}
-weighted_grr_df <- expression_cor_eg %>%
-  mutate(is_significant = as.numeric(abs(log2fc) > 1 & padj < 0.05)) %>%
-  group_by(sample_id, module_number) %>%
-  summarise(
-    wGRR = sum(is_significant * abs(cor_eg), na.rm = TRUE),
-    .groups = "drop"
-  )
+#weighted_grr_df <- expression_cor_eg %>%
+ # mutate(is_significant = as.numeric(abs(log2fc) > 1 & padj < 0.05)) %>%
+  #group_by(sample_id, module_number) %>%
+  #summarise(
+   # wGRR = sum(is_significant * abs(cor_eg), na.rm = TRUE),
+    #.groups = "drop"
+  #)  # already calculated in the hPHH_EG file 
+```
+
+```{r}
+weighted_grr_df <- readRDS(file.path(data_dir, "GRR_vs_eg_score_PHH.rds"))
 ```
 
 
 ```{r}
 # Join the calculated wGRR with GRR_vs_DRW
 GRR_vs_DRW <- GRR_vs_DRW %>%
-  left_join(weighted_grr_df, by = c("sample_id", "module_number")) %>%
-  mutate(wGRR = wGRR / module_size)
+  left_join(weighted_grr_df, by = c("sample_id", "module_number"))
 ```
 
 ```{r}
@@ -765,9 +770,8 @@ min(GRR_vs_DRW$wGRR)
 ```
 
 ```{r}
-saveRDS(GRR_vs_DRW, file = "GRR_vs_DRW_cor_eg.rds") # saving the wGRR for other scoring methods
+#saveRDS(GRR_vs_DRW, file = "GRR_vs_DRW_cor_eg.rds") # saving the wGRR for other scoring methods EDIT already calculated in the hPHH_EG.rmd file 
 ```
-
 
 ## Density plots of GRR and DRW score
 
@@ -775,7 +779,7 @@ saveRDS(GRR_vs_DRW, file = "GRR_vs_DRW_cor_eg.rds") # saving the wGRR for other 
 ggplot(GRR_vs_DRW, aes(x = wGRR)) +
   geom_histogram(aes(y = ..density..), bins = 50, fill = "green", alpha = 0.6) +
   geom_density(color = "black") +
-  theme_minimal() + labs(title = "Distribution of Gene Response Rate in RPTEC dataset")
+  theme_minimal() + labs(title = "Distribution of Gene Response Rate in PHH dataset")
 ```
 Like expected, the wGRR shows a logaritmic distribution due to the count data nature.
 
@@ -783,11 +787,11 @@ Like expected, the wGRR shows a logaritmic distribution due to the count data na
 ggplot(GRR_vs_DRW, aes(x = drw_zscore)) +
   geom_histogram(aes(y = ..density..), bins = 50, fill = "red", alpha = 0.6) +
   geom_density(color = "black") +
-  theme_minimal() + labs(title = "Distribution of DRW zScore in RPTEC dataset")
+  theme_minimal() + labs(title = "Distribution of DRW zScore in PHH dataset")
 ```
 DRW_zscore also logarithmic distributed due to using the abs(log2fc) in the pathway activity inference
 
-## Visualize GRR vs DRW score with a linear fit
+## Visualize GRR vs wDRW zscore with a linear fit
 
 ```{r}
 ggplot(GRR_vs_DRW, aes(x = drw_zscore, y = wGRR)) +
@@ -795,8 +799,8 @@ ggplot(GRR_vs_DRW, aes(x = drw_zscore, y = wGRR)) +
   geom_smooth(method = "lm", se = FALSE, color = "blue") +
   theme_minimal() +
   labs(
-    title = "Gene Response Rate vs DRW Score in RPTEC",
-    x = "Directed Random Walk score (DRW)",
+    title = "Gene Response Rate vs DRW Score in PHH",
+    x = "Weighted Directed Random Walk score (wDRW)",
     y = "Gene Response Rate (GRR)"
   )
 ```
@@ -828,7 +832,7 @@ GRR_glm_fit_df <- GRR_vs_DRW %>%
   mutate(
     fitted_prob = glm_predictions,
     fitted_sig_genes = fitted_prob * module_size,
-    residual = sig_genes - fitted_sig_genes,
+    residual = sig_genes.x - fitted_sig_genes,
     dev_resid = glm_dev_resid
   )
 ```
@@ -839,9 +843,9 @@ ggplot(GRR_glm_fit_df, aes(x = drw_zscore, y = wGRR)) +
   geom_line(aes(y = fitted_sig_genes / module_size), color = "blue", size = 1) +
   theme_minimal() +
   labs(
-    title = "Binomial GLM fit: GRR vs Eigengene Score in RPTEC",
-    x = "Eigengene Score",
-    y = "Gene Response Rate (GRR)"
+    title = "Binomial GLM fit: wGRR vs wDRW in PHH",
+    x = "Weighted Directed Random Walk score (wDRW)",
+    y = "Weighted Gene Response Rate (wGRR)"
   )
 ```
 
@@ -888,7 +892,7 @@ GRR_glm_fit_df <- GRR_glm_fit_df %>%
 
 ```{r}
 GRR_glm_fit_df <- GRR_glm_fit_df %>%
-  mutate(module = paste0("hRPTECTERT1_", module_number)) %>%
+  mutate(module = paste0("hPHH_", module_number)) %>%
   left_join(module_annotation, by = "module")
 ```
 
@@ -904,9 +908,9 @@ ggplot(GRR_glm_fit_df, aes(x = drw_zscore, y = wGRR)) +
   scale_color_manual(values = c("black", "red")) +
   theme_minimal() +
   labs(
-    title = "GRR vs DRW Score with Significant Outliers in RPTEC",
-    x = "Directed Random Walk Score (DRW)",
-    y = "Gene Response Rate (GRR)"
+    title = "wGRR vs wDRW Score with Significant Outliers in PHH",
+    x = "Weighted Directed Random Walk Score (wDRW)",
+    y = "Weighted Gene Response Rate (wGRR)"
   )
 ```
 This fit shows, visually, less over and under quantification compared to the EG. especially the high EG scores (overquantification) with 0 gene responses are not present. However, the fit still shows some underquantification
@@ -975,7 +979,7 @@ GRR_glm_fit_df %>%
     panel.grid.minor = element_blank()
   ) +
   labs(
-    title = "Top 20 modules with TOTAL significant GRR outliers (RPTEC) (DRW)",
+    title = "Top 20 modules with TOTAL significant GRR outliers (PHH) (DRW)",
     x = "Module",
     y = "Number of significant outliers"
   )
@@ -1018,7 +1022,7 @@ GRR_glm_fit_df %>%
     panel.grid.minor = element_blank()
   ) +
   labs(
-    title = "Top 20 modules with outliers ABOVE the GLM fit (RPTEC) (DRW)",
+    title = "Top 20 modules with outliers ABOVE the GLM fit (PHH) (DRW)",
     x = "Module",
     y = "Number of outliers above fit"
   )
@@ -1068,7 +1072,7 @@ GRR_glm_fit_df %>%
     panel.grid.minor = element_blank()
   ) +
   labs(
-    title = "Top 20 modules with outliers BELOW the GLM fit (RPTEC) (DRW)",
+    title = "Top 20 modules with outliers BELOW the GLM fit (PHH) (DRW)",
     x = "Module",
     y = "Number of outliers below fit"
   )
@@ -1085,7 +1089,7 @@ outliers_per_sample %>%
   geom_col(fill = "darkblue") +
   coord_flip() +
   theme_minimal() +
-  ggtitle("Top 20 conditions with significant GRR outliers from the binomial GLM fit (RPTEC) (DRW)") +
+  ggtitle("Top 20 conditions with significant GRR outliers from the binomial GLM fit (PHH) (DRW)") +
   theme(
     plot.title.position = "plot",
     plot.title = element_text(hjust = 0),
@@ -1106,7 +1110,7 @@ GRR_glm_fit_df %>%
   geom_col(fill = "brown") +
   coord_flip() +
   theme_minimal() +
-  ggtitle("Top 20 conditions with outliers ABOVE the binomial GLM fit (RPTEC) (DRW)") +
+  ggtitle("Top 20 conditions with outliers ABOVE the binomial GLM fit (PHH) (DRW)") +
   theme(
     plot.title.position = "plot",
     plot.title = element_text(hjust = 0),
@@ -1127,7 +1131,7 @@ GRR_glm_fit_df %>%
   geom_col(fill = "slateblue") +
   coord_flip() +
   theme_minimal() +
-  ggtitle("Top 20 conditions with outliers BELOW the binomial GLM fit (RPTEC) (DRW)") +
+  ggtitle("Top 20 conditions with outliers BELOW the binomial GLM fit (PHH) (DRW)") +
   theme(
     plot.title.position = "plot",
     plot.title = element_text(hjust = 0),

@@ -9,22 +9,1248 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## R Markdown
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tibble)
+library(purrr)
+library(progressr)
+library(WGCNA)
+library(tidyr)
 ```
 
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
+```{r}
+data_dir <- "C:/Users/semde/Documents/BOO_Scripts/Data/RPTEC_TXG-MAPr"
+adj_matrix   <- readRDS(file.path(data_dir, "RPTECTERT1_adjacencyMatrix.rds"))
+expression_long   <- readRDS(file.path(data_dir, "expression_long.rds"))
+module_definition        <- readRDS(file.path(data_dir, "module_definition.rds"))
+module_annotation <- readRDS(file.path(data_dir, "module_annotation.rds"))
+GRR_vs_eg_score          <- readRDS(file.path(data_dir, "GRR_vs_eg_score_RPTEC.rds"))
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+# Introduction sDRW
+
+In this .Rmd file, the Weighted Significant Directed Random Walk (s-wDRW) will be evaluated. This scoring algorithm tweaks the 'basic'Directed Random Walk a little and therefore the same procedures will be followed. It tweaks the walker formula, using this expression:
+
+$$
+W_{t+1} = (1 - r) A \left( \frac{N_1 + N_2}{2} \right) + r W_t
+$$
+
+Here $A$ represents the row-normalized adjacency matrix, described below. $r$ represents the restart probability, set at 0.7. $N1$ and $N2$ present the 
+
+## Introduction 'basic' Directed Random Walk
+
+**The 'basic' DRW introduction is given for comparison, this procedure will be largely followed, except for the changes given above**
+
+In this Rmd file, the 'basic' Directed Random Walk will be performed on the RPTEC dataset.This involves performing a random walk over the network, where nodes present genes and edges present the directions of the network. The procedures described by (Hui et al, 2024) and (Liu et al, 2013) are followed as much as possible. However, they used predefined (KEGG) pathways and this project used co-expressed modules. So, some things will differ and it will be mentioned where it differs. 
+
+First, the directions of the network will be constructed based on the correlation eigengenes  in a module, if cor_eg(gene A) > cor_eg(gene B) than A has an edge to B: A->B (represented as 1). This direction will be weighted by the Topological Overlap Matrix (TOM). *The original article uses predefined pathways for this.* The TOM accounts for indirect gene correlations. Then, the directions will be reversed, because "a web page is important if other pages point to it" and therefore also genes (Liu et al, 2013). Also,an artificial ground node will be used, which is bidirectionally connected to every gene. This is done to make sure that every node is connected and there are no 0-out of degree connections (Liu et al, 2013)
+
+After that, the random walker will be performed: 
+
+$$
+W_{t+1} = (1 - r) A W_t + r W_0
+$$
+Here, the $r$ represents the restart probability, set at 0.7 (Hui et al). This represents the chance to return to the initial weight vector ($W_0$), which represents the "walker score" for each gene: -log10(padj) * abs(Log2FC). *The original article used t-values, but the degrees of freedom are not known. So the walker score is proposed.* 
+
+$$
+W_0(g_i) = -\log_{10} \left( p_{\mathrm{adj}}(g_i) \right) \cdot \left| \log_2 \mathrm{FC}(g_i) \right|
+$$
+
+The $A$ represents the row normalized directed TOM. The $W_t$ vector represents the weight of the nodes (genes) at time $t$ and the $W_{t+1}$ vector represents the weight of the nodes (genes) at time $t+1$.
+
+The recursive walker will be performed until the L1-norm ,the difference (delta), between $W_t$ and $W_{t+1}$ converges to $10^{–10}$ and this limit, the $W_{∞}$, will be obtained for each gene. The $W_{∞}$ of the ground node will be evenly distributed over the other genes in the module.
+
+Afterwards, the module activty for module $M_j$ will be calculated with the following formula:
+
+$$
+wDRW(M_j) = \frac{ \sum_{i=1}^{n_j} W_\infty(g_i) \cdot |\log_2 \mathrm{FC}(g_i)| }{ \sqrt{ \sum_{i=1}^{n_j} \left( W_\infty(g_i) \right)^2 } }
+$$
+Here, the $W_{∞}$ represents the weight of each gene in the network and log2fc represents the expression value. The sum of all the $W_{∞}$ vector multiplied by the log2fc of the genes will be divided by the square root of the sum of the squared $W_{∞}$ vector for each gene. Only genes with a padj value < 0.05 will be used to construct the module activity.
+
+# Inspecting the adjacency matrix
+
+First, the adj matrix will be inspected
+
+```{r}
+dim(adj_matrix)
+head(adj_matrix[, 1:5])
+```
+
+```{r}
+min(adj_matrix)
+max(adj_matrix)
+```
+
+```{r}
+sum(adj_matrix[1, ])
+sum(adj_matrix[2, ])
+```
+
+adj matrix goes from ~0 to 1. and the x features have the same length as the y features, as expected due to it being an adjacency matrix. But rows are not normalized yet, this will have to be done for every module in the walker formula.
+
+## Calculating the Topological Overlap Matrix (TOM)
+
+The TOM will be calculated to later weight the directions of the graphs. 
+
+```{r}
+#TOM <- TOMsimilarity(adj_matrix)
+```
+
+```{r}
+#dimnames(TOM) <- dimnames(adj_matrix)
+```
+
+```{r}
+TOM   <- readRDS(file.path(data_dir, "TOM_RPTEC.rds"))
+```
+
+
+```{r}
+dim(TOM)
+head(TOM[, 1:5])
+```
+
+As shown above, the TOM matrix calculation worked and the genes now have different values. Potentially, more topologically correct. This TOM will be used to weight the directions of the graph.
+
+```{r}
+#saveRDS(TOM, file = "TOM_RPTEC.rds")
+```
+
+
+# Removing NA Values and calculated padj from expression data
+
+As discussed in the hRPTEC_eg.Rmd file. The padj values are not calculated and will be calculated. Also, NA values will be dropped after calculating padj.
+
+```{r}
+sum(is.na(expression_long$padj)) # Na values in padj
+```
+
+```{r}
+expression_long$padj <- p.adjust(expression_long$pvalue, method = "BH")
+sum(is.na(expression_long$padj))
+```
+
+```{r}
+sum(is.na(expression_long$padj) & is.na(expression_long$log2fc))
+```
+
+```{r}
+expression_long_filtered <- expression_long %>%
+  filter(!is.na(padj), !is.na(log2fc)) # Remove NA values for padj and log2FC
+```
+
+```{r}
+sum(is.na(expression_long_filtered$padj))
+```
+
+# Calculating W0 for the Directed Random Walker
+
+The initial artical uses t-scores (Hui et al, 2024) for constructing the initial weight (W_0) of the walker, however the degrees of freedom are not known. So therefore, a different score will be used. For this the "walker score" will be used, which is proposed as the abs(Log2FC) * -log10(padj). To account for statistical significance and biological significance. 
+
+```{r}
+expression_long_filtered$walker_score <- abs(expression_long_filtered$log2fc) *
+                                         (-log10(expression_long_filtered$padj))
+```
+
+```{r}
+sum(is.na(expression_long_filtered$walker_score))
+```
+
+```{r}
+ggplot(expression_long_filtered, aes(x = walker_score)) +
+  geom_histogram(aes(y = ..density..), bins = 50, fill = "purple", alpha = 0.6) +
+  geom_density(color = "darkblue") +
+  theme_minimal() + labs(title = "Distribution of walker score in RPTEC dataset")
+```
+
+heavily skewed, but will be normalized in the activity calculation.
+
+# Join the module_definition with the expression_long_filtered df
+
+The module definition will be joined with the gene expression data to assign every gene to the corresponding module for later use in the random walk.
+
+```{r}
+expression_joined <- expression_long_filtered %>%
+  left_join(module_definition %>% select(entrez_id, module_number), by = "entrez_id")
+```
+
+# Constructing the Directed Graph
+
+To construct the Directed Graph for use in the Directed Random Walk. The correlation eigengene scores will be used for genes in the same module. If cor_eg(gene A) > cor_eg(gene B) than A has an edge to B: A->B. Then the directions will be reversed: a webpage is important if other webpages point to it (Hui et al, 2024). This directed Graph will then be weighted by the TOM. Resulting in a weighted Directed Graph.
+
+## Correlation EGs
+
+No correlation EGs are given for the RPTEC dataset, so these will be calculated first.
+
+```{r}
+expression_cor_eg <- expression_joined %>%
+  # Remove module 0, because this is removed in the GRR_vs_eg_score df
+  filter(module_number != 0) %>%
+  
+  # Add eg_score per sample_id + module_number in expression df
+  left_join(GRR_vs_eg_score, by = c("sample_id", "module_number")) %>%
+  
+  # calculate cor_eg per sample_id and module for every gene
+  group_by(entrez_id, module_number) %>%
+  mutate(
+    cor_eg = abs(cor(log2fc, eg_score, method = "pearson", use = "pairwise.complete.obs"))
+  ) %>%
+  ungroup() %>%
+  
+  # Keep only relevant columns
+  select(entrez_id, sample_id, module_number, log2fc, eg_score, cor_eg)
+```
+
+```{r}
+sum(is.na(expression_cor_eg$cor_eg))
+```
+
+## Adding all relevant columns to expression_cor_eg for the walker loop
+
+```{r}
+expression_cor_eg <- expression_cor_eg %>%
+  left_join(
+    expression_joined %>%
+      select(entrez_id, sample_id, module_number, padj, walker_score),
+    by = c("entrez_id", "sample_id", "module_number")
+  )
+```
+
+## Calculating the Directed Graph
+
+The directed graph will be calculated in the walker loop for each module+condition.
+
+# Perform the walker on one module to learn how it works practically
+
+Before performing the walker on the whole RPTEC dataset, it will be tested on one module to assess how it works exactly. Module 100 was selected with condition LU_HRPTECTERT1_SINGLE_CITRININ_T3_C3 (random), because this module is small (5 genes) and therefore easy to visualize the weights of the individual genes
+
+## Defining the module and condition for the testing 
+
+```{r}
+module_nr = 100
+condition_id = "LU_HRPTECTERT1_SINGLE_CITRININ_T3_C3"
+```
+
+## Preparing the data for the condition and module
+
+```{r}
+# Subset the module
+
+expr_sub <- expression_cor_eg %>%
+  filter(module_number == module_nr, sample_id == condition_id)
+
+genes_in_module <- expr_sub$entrez_id
+cor_vec <- expr_sub$cor_eg
+names(cor_vec) <- expr_sub$entrez_id
+```
+
+
+```{r}
+genes_in_TOM <- intersect(genes_in_module, rownames(TOM))
+cor_vec <- cor_vec[genes_in_TOM]
+TOM_sub <- TOM[genes_in_TOM, genes_in_TOM]
+```
+
+## Defining the Directed Graph
+
+Again, if cor_eg(A) > cor_eg (B) then edge: A -> B. However, these edges will be reverted: a gene is important if other genes point to it (Liu et al, 2013)
+
+```{r}
+D <- outer(cor_vec, cor_vec, FUN = function(x, y) as.numeric(x < y)) # reverted direction
+rownames(D) <- colnames(D) <- names(cor_vec)
+
+# Directed weighted adjacency matrix
+W_directed <- D * TOM_sub # Weight the directions with the TOM
+```
+
+## Adding a ground node
+
+A ground node will be added to ensure that the walker does not get stuck on a gene without outgoing edges. (Liu et al, 2013)
+
+```{r}
+genes <- rownames(W_directed)
+ground_node <- "GROUND"
+n <- length(genes)
+
+# Maak empty matrix
+W_plus <- matrix(0, nrow = n + 1, ncol = n + 1)
+rownames(W_plus) <- colnames(W_plus) <- c(genes, ground_node)
+
+# Add original matrix
+W_plus[genes, genes] <- W_directed
+
+# Add ground node to genes without outgoing edges
+zero_rows <- which(rowSums(W_directed) == 0)
+if (length(zero_rows) > 0) {
+  W_plus[genes[zero_rows], ground_node] <- 1e-4  # This will be normalized to "1" later
+  
+  # Ground node has equal weight to every other gene in the module
+  W_plus[ground_node, genes] <- 1
+}
+
+# Normalization of the matrix
+diag(W_plus) <- 0
+A <- W_plus / rowSums(W_plus)
+```
+
+```{r}
+sum(A[1, ])
+sum(A[2, ])
+```
+```{r}
+print(A)
+```
+
+```{r}
+print(expr_sub)
+```
+
+The weighted directed matrix is correctly normalized. and directions are reversed.
+
+## Defining the initial probability, based on the 'walker score'
+
+The initial probability will be assigned on the earlier calculated walker score.
+
+```{r}
+# Prepare the initial walker probability (W0) based on the proposed walker score. To 'boost' the significant genes, they only get an innitial weight (W0), this is done to        reduce low DRW scores with high wGRR as this was shown in subset calculations
+ 
+  # Initialize W0 with all genes 0
+  W0 <- rep(0, length(rownames(A)))
+  names(W0) <- rownames(A)
+  
+  # Select only the walker score for significant genes
+  W0_sig <- expr_sub %>%
+    filter(entrez_id %in% rownames(A), padj < 0.05) %>%
+    select(entrez_id, walker_score) %>%
+    tibble::deframe()
+  
+  # Fill W0 only for significant genes
+  W0[names(W0_sig)] <- abs(W0_sig)
+  
+  # Normalization
+  W0 <- W0 / sum(W0)
+  
+  # Security: make sure the genes match
+  stopifnot(all(names(W0) == rownames(A)))
+```
+
+```{r}
+print(W0) 
+sum(W0)
+print(expr_sub$walker_score)
+```
+
+a higher walker score recieves a higher W0. Non significant genes (padj<0.05) are correctly filtered out
+
+## Running the walker
+
+```{r}
+# Run random walk with restart using sDRW update rule
+r <- 0.7
+W_prev <- W0
+convergence <- data.frame(iteration = 0, delta = NA)
+W_all <- list(W_prev)
+
+for (i in 1:1000) {
+  W_avg <- numeric(length(W_prev))
+  names(W_avg) <- names(W_prev)
+
+  for (j in seq_along(W_prev)) {
+    incoming <- which(A[, j] > 0)
+    if (length(incoming) == 0) next
+
+    weights <- A[incoming, j]
+    avg_vals <- (W_prev[incoming] + W_prev[j]) / 2
+    W_avg[j] <- sum(weights * avg_vals)
+  }
+
+  # Normalize to prevent weight explosion
+  W_avg_sum <- sum(W_avg)
+  if (W_avg_sum == 0 || is.na(W_avg_sum)) {
+    return(tibble(condition_id = condition_id, module_nr = module_nr, drw_score = 0))
+  }
+  W_avg <- W_avg / W_avg_sum
+
+  W_new <- (1 - r) * W_avg + r * W_prev
+  delta <- sum(abs(W_new - W_prev))
+  convergence <- rbind(convergence, data.frame(iteration = i, delta = delta))
+  W_all[[i + 1]] <- W_new
+  if (delta < 1e-10) break
+  W_prev <- W_new
+}
+
+W_inf <- as.numeric(W_new)
+names(W_inf) <- rownames(A)
+```
+
+```{r}
+print(summary(W_inf)) 
+```
+
+```{r}
+print(W_inf)
+```
+Above shows the final weights of the walker.
+
+### Distributing the final weight of the ground node
+
+The final weight of the ground node will be evenly distributed across all other nodes.
+
+```{r}
+if ("GROUND" %in% names(W_inf)) {
+  ground_mass <- W_inf["GROUND"]
+  W_inf <- W_inf[names(W_inf) != "GROUND"]
+  W_inf <- W_inf + ground_mass / length(W_inf)
+}
+```
+
+```{r}
+print(W_inf)
+sum(W_inf)
+```
+
+
+## Visualizations
+
+The walker output will be visualized to understand it better
+
+### Visualization of the convergence
+
+First the L1-norm, the difference between $W_t$ and $W_{t+1}$, will be visualized to assess how the walker converges.
+
+```{r}
+# Visualize convergence
+
+ggplot(convergence[-1, ], aes(x = iteration, y = delta)) +
+  geom_line(color = "blue") +
+  scale_y_log10() +
+  labs(title = paste("Convergence of sDRW for Module", module_nr),
+       x = "Iteration", y = "Change (L1 norm, log scale)") +
+  theme_minimal()
+```
+
+As shown above, the L1-norm decreases after iterations, making the recursive walker converge to the base case (L1-norm 10^-10). 
+
+### Visualizations of the weight vectors
+
+Here the meanof the $W_0$ and $W_t$ vectors will be visualized.
+
+```{r}
+# Preprocessing for visualization
+walker_matrix <- do.call(cbind, W_all)
+colnames(walker_matrix) <- paste0("iter_", seq_along(W_all) - 1)
+
+# Remove ground node
+walker_matrix <- walker_matrix[rownames(walker_matrix) != "GROUND", , drop = FALSE]
+
+# Calculate mean scores of the W_t vector
+mean_scores <- colMeans(walker_matrix, na.rm = TRUE)
+
+# Mean of W0 
+mean_w0 <- mean_w0 <- mean(W0[names(W0) != "GROUND"])
+
+# Create dataframe for visualization
+mean_df <- tibble(
+  iteration = seq_along(mean_scores) - 1,
+  mean_score = mean_scores
+)
+
+last_iter <- max(mean_df$iteration)
+last_score <- mean_df$mean_score[mean_df$iteration == last_iter]
+
+ggplot(mean_df, aes(x = iteration, y = mean_score)) +
+  geom_line(color = "steelblue", linewidth = 1) +
+  geom_point(size = 1.5, color = "steelblue") +
+  geom_hline(yintercept = mean_w0, color = "red", linetype = "dashed", linewidth = 1) +
+  annotate("text", x = last_iter, y = last_score, label = "W_t", color = "steelblue", vjust = -1) +
+  annotate("text", x = max(mean_df$iteration) * 0.9, y = mean_w0, label = "W0", color = "red", vjust = -1) +
+  labs(title = "Mean Weight Vectors per Iteration",
+       x = "Iteration", y = "Mean Weight Vector") +
+  theme_minimal() +
+  ylim(0.05, 0.09)
+
+```
+
+Above could be seen how the weight vectors change. It is shown that the W_t vector converges to a stable value, which is below the W0 vector in this case.
+
+## Inferring pathway activity
+
+Calculate the activity of the module with the output $W_{∞}$ for the genes. Only genes with an adjusted p-value < 0.05 will be used in the calculation. Also, the abs value of the log2fc is used, because otherwise the activity score will get canceled out (became clear when running on a subset).
+
+```{r}
+activity_df <- expression_joined %>%
+  filter(sample_id == condition_id,
+         entrez_id %in% names(W_inf),
+         padj < 0.05) %>%
+  select(entrez_id, log2fc) %>%
+  mutate(W_inf = W_inf[entrez_id],
+         term = W_inf * abs(log2fc))
+
+numerator <- sum(activity_df$term, na.rm = TRUE)
+denominator <- sqrt(sum(activity_df$W_inf^2, na.rm = TRUE))
+pathway_activity_score <- numerator / denominator
+```
+
+
+```{r}
+# Output
+cat("sDRW pathway activity score for module", module_nr, "in condition", condition_id, ":\n")
+print(pathway_activity_score)
+```
+
+```{r}
+connectivity <- rowSums(TOM_sub)
+
+print(
+  activity_df %>%
+    left_join(
+      expression_joined %>%
+        filter(sample_id == condition_id) %>%
+        select(entrez_id, padj),
+      by = "entrez_id"
+    ) %>%
+    mutate(connectivity = connectivity[entrez_id])
+)
+```
+
+Above shows the genes that were used in the activity calculation. The connectivity column is the sum of the TOM rows. A higher connectivity resulted in a higher W_inf, as expected. Term is $W_{∞}$ * abs log2fc.  
+
+# Perform the walker on the whole RPTEC dataset
+
+The above applied logic was now incorporated in a function to loop over the whole dataset and calculate DRW scores. 
+
+## Function
+
+This function will be called for every combination of module and condition in a loop. It follows the same procedure as the above calculation done "by hand". 
+
+```{r}
+compute_sdrw_score <- function(condition_id, module_nr, expression_df, TOM) {
+  # Subset the expression dataframe for the specified module and sample
+  expr_sub <- expression_df %>%
+    filter(sample_id == condition_id, module_number == module_nr)
+
+  if (nrow(expr_sub) == 0) {
+    return(tibble(condition_id = condition_id, module_nr = module_nr, drw_score = 0))
+  } # To ensure not crashing the function
+
+  # Extract correlation vector
+  cor_vec <- expr_sub$cor_eg
+  names(cor_vec) <- expr_sub$entrez_id
+
+  # Intersect genes with TOM matrix and create a subset
+  genes_in_TOM <- intersect(expr_sub$entrez_id, rownames(TOM))
+  cor_vec <- cor_vec[genes_in_TOM]
+  TOM_sub <- TOM[genes_in_TOM, genes_in_TOM, drop = FALSE]
+
+  if (length(genes_in_TOM) < 2) {
+    return(tibble(condition_id = condition_id, module_nr = module_nr, drw_score = 0))
+  } # To ensure not crashing the function
+
+  # Create directed edges: gene B -> gene A if cor(A) > cor(B) as explained above
+  D <- outer(cor_vec, cor_vec, FUN = function(x, y) as.numeric(x < y))
+  rownames(D) <- colnames(D) <- names(cor_vec)
+
+  # Weight the directed edges with TOM
+  W_directed <- D * TOM_sub
+
+  # Add ground node to avoid 0 out of degree nodes
+  genes <- rownames(W_directed)
+  ground_node <- "GROUND"
+  n <- length(genes)
+
+  W_plus <- matrix(0, nrow = n + 1, ncol = n + 1)
+  rownames(W_plus) <- colnames(W_plus) <- c(genes, ground_node)
+
+  # Add original weighted adjacency to W_plus
+  W_plus[genes, genes] <- W_directed
+
+  # Add edges from ground node and to it if a row has no outgoing edges
+  zero_rows <- which(rowSums(W_directed) == 0)
+  if (length(zero_rows) > 0) {
+    W_plus[genes[zero_rows], ground_node] <- 1e-4 # This will be normalized to 1 later
+    W_plus[ground_node, genes] <- 1
+  }
+
+  # Normalize the matrix row-wise
+  diag(W_plus) <- 0
+  row_sums <- rowSums(W_plus)
+  row_sums[row_sums == 0] <- 1e-10  # prevent division by zero (not possible if all goes well)
+  A <- W_plus / row_sums
+
+  # Prepare the initial walker probability (W0) based on the proposed walker score. To 'boost' the significant genes, they only get an innitial weight (W0), this is done to        reduce low DRW scores with high wGRR as this was shown in subset calculations
+ 
+  # Initialize W0 with all genes 0
+  W0 <- rep(0, length(rownames(A)))
+  names(W0) <- rownames(A)
+  
+  # Select only the walker score for significant genes
+  W0_sig <- expr_sub %>%
+    filter(entrez_id %in% rownames(A), padj < 0.05) %>%
+    select(entrez_id, walker_score) %>%
+    tibble::deframe()
+  
+  # Fill W0 only for significant genes
+  W0[names(W0_sig)] <- abs(W0_sig)
+  
+  # Security: no zeros
+  if (sum(W0) == 0 || any(is.na(W0))) {
+    return(tibble(condition_id = condition_id, module_nr = module_nr, drw_score = 0))
+  }
+  
+  # Normalization
+  W0 <- W0 / sum(W0)
+  
+  # Security: make sure the genes match
+  stopifnot(all(names(W0) == rownames(A)))
+
+  # Run random walk with restart
+  r <- 0.7
+  W_prev <- W0
+  for (i in 1:1000) {
+    W_avg <- numeric(length(W_prev))
+    names(W_avg) <- names(W_prev)
+  
+    for (j in seq_along(W_prev)) {
+      incoming <- which(A[, j] > 0)
+      if (length(incoming) == 0) next
+  
+      weights <- A[incoming, j]
+      avg_vals <- (W_prev[incoming] + W_prev[j]) / 2
+      W_avg[j] <- sum(weights * avg_vals)
+    }
+  
+    # Normalize to prevent weight explosion
+    W_avg_sum <- sum(W_avg)
+    if (W_avg_sum == 0 || is.na(W_avg_sum)) {
+      return(tibble(condition_id = condition_id, module_nr = module_nr, drw_score = 0))
+    }
+    W_avg <- W_avg / W_avg_sum
+  
+    W_new <- (1 - r) * W_avg + r * W_prev
+    delta <- sum(abs(W_new - W_prev))
+    if (delta < 1e-10) break
+    W_prev <- W_new
+  }
+
+W_inf <- as.numeric(W_new)
+names(W_inf) <- rownames(A)
+
+  # Evenly redistribute W_inf of the ground to the other nodes
+  if ("GROUND" %in% names(W_inf)) {
+    ground_mass <- W_inf["GROUND"]
+    W_inf <- W_inf[names(W_inf) != "GROUND"]
+    W_inf <- W_inf + ground_mass / length(W_inf)
+  }
+
+  # Compute pathway activity using only genes with padj < 0.05
+  activity_df <- expression_df %>%
+    filter(sample_id == condition_id,
+           module_number == module_nr,
+           entrez_id %in% names(W_inf),
+           padj < 0.05) %>%
+    select(entrez_id, log2fc) %>%
+    mutate(W_inf = W_inf[entrez_id],
+           term = W_inf * abs(log2fc))
+
+  numerator <- sum(activity_df$term, na.rm = TRUE)
+  denominator <- sqrt(sum(activity_df$W_inf^2, na.rm = TRUE))
+  pathway_activity_score <- ifelse(denominator == 0, 0, numerator / denominator)
+
+  tibble(condition_id = condition_id, module_nr = module_nr, sdrw_score = pathway_activity_score)
+}
+```
+
+## Test the function
+
+```{r}
+drw_test_result <- compute_sdrw_score(
+  condition_id = condition_id,
+  module_nr = module_nr,
+  expression_df = expression_cor_eg,
+  TOM = TOM
+)
+```
+
+## Inspect the test results 
+
+```{r}
+# View the head of the results
+print(head(drw_test_result))
+```
+
+This 'test' result is the same as the calculation done by hand. So now the goal is to loop over all the modules and conditions and calculate DRW scores with the function.
+
+## Perform the DRW calculation on all the modules
+
+All the unique combinations of sample_id and module_number will be filtered and later this will be looped over and the DRW functions will be applied
+
+```{r}
+# This chunk filters for all the unique combinations to loop over
+module_samples <- expression_joined %>%
+  filter(module_number != 0) %>%  # Exclude Module 0
+  distinct(condition_id = sample_id, module_nr = module_number) #%>%
+  #slice_tail(n = 29)  # Keep only the last x combinations, for testing the function
+```
+
+```{r}
+handlers("txtprogressbar") # this is to show the progress of the long calculation
+```
+
+This is a long calculation for the RPTEC dataset (~ 120 minutes on my local CPU (a relatively new Intel i5)), so will not be knitted. I tried to parallize it, but did not work. Probably due to not having enough RAM (8 GB) relative to the size of the data.
+
+```{r, eval=FALSE}
+with_progress({
+  p <- progressor(steps = nrow(module_samples))
+
+  sdrw_scores <- map_dfr(
+    1:nrow(module_samples),
+    function(i) {
+      row <- module_samples[i, ]
+      p()
+
+        tryCatch({
+        # Casting to the right data structures to be sure
+        cond_id <- as.character(row$condition_id)
+        mod_nr <- as.integer(row$module_nr)
+
+        compute_sdrw_score(
+          condition_id = cond_id,
+          module_nr = mod_nr,
+          expression_df = expression_cor_eg,
+          TOM = TOM
+        )
+
+      }, error = function(e) {
+        message("Error With ", row$condition_id, " × ", row$module_nr, ": ", e$message)
+        return(NULL)
+      })
+    }
+  )
+})
+```
+```{r}
+saveRDS(sdrw_scores, file = "drw_scores_RPTEC_directed.rds") # saving the drw_scores
+```
+
+
+```{r}
+#sdrw_scores          <- readRDS(file.path(data_dir, "sdrw_scores_RPTEC_directed.rds")) # reading the drw_scores
+```
+
+
+```{r}
+print(head(sdrw_scores))
+print(tail(sdrw_scores))
+```
+
+
+```{r}
+sum(is.na(sdsrw_scores$sdrw_score))
+```
+
+No NA values
+
+### Normalization
+
+The DRW scores will be normalized for their module_size and called the drw_zscore (it is not really a z-score but this is for simplification)
+
+```{r}
+drw_scores <- drw_scores %>%
+  left_join(
+    GRR_vs_eg_score %>% select(sample_id, module_number, module_size),
+    by = c("condition_id" = "sample_id", "module_nr" = "module_number")
+  ) %>%
+  mutate(
+    sdrw_zscore = sdrw_score / module_size
+  )
+```
+
+```{r}
+sum(is.na(drw_scores$sdrw_zscore))
+```
+```{r}
+#saveRDS(drw_scores, file = "drw_scores_RPTEC_directed.rds") # saving the drw_scores
+```
+
+
+No NA values
+
+# Evaluate the DRW scores on the RPTEC with the wGRR metric
+
+The DRW scores will be evaluated on the Weighted Gene Response Rate (wGRR) metric to compare DRW to the other scoring methods. The wGRR metric represents the proportion of weighted significant genes in a module, where significant represents log2FC > 1.0 and padj < 0.05 * cor_eg. This metric is therefore proposed as an evaluation metric for topological activation of a module.
+
+$$
+wGRR = \frac{ \displaystyle \sum_{i}^{n} \left( |\log_2 \mathrm{FC}_i| > 1.0 \land p_{\mathrm{adj},i} < 0.05 \right) \cdot \mathrm{cor\_eg}_i }{ n }
+$$
+
+## GRR
+
+```{r}
+GRR_vs_DRW <- GRR_vs_eg_score %>%
+  left_join(
+    sdrw_scores %>% 
+      select(-module_size),
+    by = c("sample_id" = "condition_id", "module_number" = "module_nr")
+  )
+```
+
+## wGRR
+
+```{r}
+weighted_grr_df <- expression_cor_eg %>%
+  mutate(is_significant = as.numeric(abs(log2fc) > 1 & padj < 0.05)) %>%
+  group_by(sample_id, module_number) %>%
+  summarise(
+    wGRR = sum(is_significant * abs(cor_eg), na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+
+```{r}
+# Join the calculated wGRR with GRR_vs_DRW
+GRR_vs_DRW <- GRR_vs_DRW %>%
+  left_join(weighted_grr_df, by = c("sample_id", "module_number")) %>%
+  mutate(wGRR = wGRR / module_size)
+```
+
+```{r}
+sum(is.na(GRR_vs_DRW$wGRR))
+```
+
+```{r}
+min(GRR_vs_DRW$wGRR)
+```
+
+```{r}
+#saveRDS(GRR_vs_DRW, file = "GRR_vs_DRW_cor_eg.rds") # saving the wGRR for other RPTEC scoring methods
+```
+
+The wGRR has a reach of 0 to 1 (will never reach one practically, due to cor_eg), as expected.
+
+## Density plots of GRR and DRW score
+
+```{r}
+ggplot(GRR_vs_DRW, aes(x = wGRR)) +
+  geom_histogram(aes(y = ..density..), bins = 50, fill = "green", alpha = 0.6) +
+  geom_density(color = "black") +
+  theme_minimal() + labs(title = "Distribution of Weighted Gene Response Rate (wGRR) in RPTEC dataset")
+```
+
+Like expected, the wGRR shows a logaritmic distribution due to the count data nature.
+
+```{r}
+ggplot(GRR_vs_DRW, aes(x = sdrw_zscore)) +
+  geom_histogram(aes(y = ..density..), bins = 50, fill = "red", alpha = 0.6) +
+  geom_density(color = "black") +
+  theme_minimal() + labs(title = "Distribution of DRW score in RPTEC dataset")
+```
+DRW score also logarithmic distributed due to using the abs(log2fc) in the pathway activity inference
+
+## Visualize GRR vs DRW score with a linear fit
+
+```{r}
+ggplot(GRR_vs_DRW, aes(x = sdrw_zscore, y = wGRR)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  theme_minimal() +
+  labs(
+    title = "Weighted Gene Response Rate (wGRR) vs s-wDRW Score in RPTEC",
+    x = "Weighted Significant Directed Random Walk score (s-wDRW)",
+    y = "Weighted Gene Response Rate (wGRR)"
+  )
+```
+The linear fit does not fit the data well visually, so a binomial glm will be fitted and outliers will be calculated from this fit.
+
+## Binomial Generalized Linear Model (GLM)
+
+```{r}
+glm_data <- GRR_vs_DRW %>%
+  filter(!is.na(wGRR), !is.na(sdrw_zscore)) # This filtering was performed as the function was first tested on a subset, but the filtering is irrelevant for the whole dataset as there are no NAs
+```
+
+
+```{r}
+glm_fit <- glm(
+  wGRR ~ sdrw_zscore,
+  data = glm_data,
+  family = quasibinomial(link = "logit") # quasibinomial as the wGRR is a proportion multiplied by a continuous variable, the cor_eg.
+)
+```
+
+```{r}
+# Make predictions and residuals
+glm_predictions <- predict(glm_fit, type = "response")
+glm_dev_resid <- residuals(glm_fit, type = "deviance")
+
+# Combine into a new dataframe
+GRR_glm_fit_df <- GRR_vs_DRW %>%
+  mutate(
+    fitted_prob = glm_predictions,
+    fitted_sig_genes = fitted_prob * module_size,
+    residual = sig_genes - fitted_sig_genes,
+    dev_resid = glm_dev_resid
+  )
+```
+
+```{r}
+ggplot(GRR_glm_fit_df, aes(x = sdrw_zscore, y = wGRR)) +
+  geom_point(alpha = 0.5, size = 0.8) +
+  geom_line(aes(y = fitted_sig_genes / module_size), color = "blue", size = 1) +
+  theme_minimal() +
+  labs(
+    title = "Binomial GLM fit: wGRR vs s-wDRW in RPTEC",
+    x = "Weighted Significant Directed Random Walk Score (s-wDRW)",
+    y = "Weighted Gene Response Rate (wGRR)"
+  )
+```
+
+Visually, there are less outlying points using the DRW score than using the abs Eigengene score.
+
+```{r}
+summary(glm_fit)
+```
+
+```{r}
+deviance(glm_fit) / df.residual(glm_fit)
+```
+
+```{r}
+1 - (glm_fit$deviance / glm_fit$null.deviance)
+```
+
+### significant outliers 
+
+For each module and sample, we compare the observed number of significant genes to the expected number based on the binomial GLM, and calculate a two-sided z-score and p-value using the binomial standard error. By doing this, the significant outlying modules from the glm fit are identified.
+
+```{r}
+GRR_glm_fit_df <- GRR_glm_fit_df %>%
+  mutate(
+    se_fit = sqrt(module_size * fitted_prob * (1 - fitted_prob)),
+    z_score = (sig_genes - fitted_sig_genes) / se_fit,
+    p_value = 2 * pnorm(-abs(z_score))  # two-sided test
+  )
+```
+
+```{r}
+GRR_glm_fit_df <- GRR_glm_fit_df %>%
+  mutate(outlier = p_value < 0.05)
+```
+
+```{r}
+GRR_glm_fit_df <- GRR_glm_fit_df %>%
+  mutate(
+    outlier_direction = case_when(
+      outlier & z_score > 0 ~ "Above fit",
+      outlier & z_score < 0 ~ "Below fit",
+      TRUE ~ "Not significant"
+    )
+  )
+```
+
+```{r}
+GRR_glm_fit_df <- GRR_glm_fit_df %>%
+  mutate(module = paste0("hRPTECTERT1_", module_number)) %>%
+  left_join(module_annotation, by = "module")
+```
+
+```{r}
+sum(GRR_glm_fit_df$outlier, na.rm = TRUE)
+```
+There are 7134 outliers found. This is less than the eg score.
+
+```{r}
+ggplot(GRR_glm_fit_df, aes(x = drw_zscore, y = wGRR)) +
+  geom_point(aes(color = outlier), alpha = 0.6, size = 0.9) +
+  geom_line(aes(y = fitted_sig_genes / module_size), color = "blue", size = 1) +
+  scale_color_manual(values = c("black", "red")) +
+  theme_minimal() +
+  labs(
+    title = "wGRR vs s-wDRW Score with Significant Outliers in RPTEC",
+    x = "Weighted Significant Directed Random Walk Score (s-wDRW)",
+    y = "Weighted Gene Response Rate (wGRR)"
+  )
+```
+This fit shows, visually, less over and under quantification compared to the EG. especially the high EG scores (overquantification) with 0 gene responses are not present. However, the fit still shows some underquantification. But overall, this scoring shows less randomness than the eg scoring method in the proposed 
+
+## Modules and conditions with most significant outliers'
+
+Based on the binomial GLM fit, we will now find the modules and conditions with the most significant outliers. Total, above and below the fit.
+
+```{r}
+significant_outliers_filtered <- GRR_glm_fit_df %>%
+  filter(outlier)
+```
+
+```{r}
+outliers_per_module <- significant_outliers_filtered %>%
+  count(module_number, sort = TRUE)
+```
+
+```{r}
+outliers_per_sample <- significant_outliers_filtered %>%
+  count(sample_id, sort = TRUE)
+```
+
+```{r}
+head(outliers_per_module, 10) # Top modules with outliers
+head(outliers_per_sample, 10) # Top cconditions with outliers
+```
+Interestingly, other modules and conditions are now found to be the top outliers than the ones found by the eigengene score analysis.
+
+### Outliers per module: total, below and above the fit with human annotation
+
+Here, we will visualize the modules with the most outliers. Total, below and above the Binomial GLM fit.
+
+#### Total outliers from the GLM fit
+
+```{r}
+threshold <- 300  # Same threshold
+
+GRR_glm_fit_df %>%
+  filter(outlier) %>%
+  count(module, annotation, sort = TRUE) %>%
+  slice_max(n, n = 20, with_ties = FALSE) %>%
+  mutate(
+    max_n = max(n),
+    hjust_val = ifelse(n < threshold, 0, 1.1),
+    label_pos = ifelse(n < threshold, n + 2, n - 2)
+  ) %>%
+  ggplot(aes(x = reorder(module, n))) +
+  geom_col(aes(y = max_n), fill = "grey97", width = 0.8) +
+  geom_col(aes(y = n), fill = "lavender", width = 0.8) +
+  geom_text(
+    aes(y = label_pos, label = annotation, hjust = hjust_val),
+    size = 1.8, color = "black"
+  ) +
+  coord_flip(clip = "off") +
+  scale_y_continuous(
+    limits = c(0, max(GRR_glm_fit_df %>%
+      filter(outlier) %>%
+      count(module) %>%
+      slice_max(n, n = 20, with_ties = FALSE) %>%
+      pull(n)) + 10),
+    expand = c(0, 0)
+  ) +
+  theme_minimal() +
+  theme(
+    plot.margin = margin(5.5, 100, 5.5, 5.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  ) +
+  labs(
+    title = "Top 20 modules with TOTAL significant GRR outliers (RPTEC) (wDRW)",
+    x = "Module",
+    y = "Number of significant outliers"
+  )
+```
+
+#### Outliers above the GLM fit
+
+```{r}
+threshold <- 300  # Threshold for switching annotation position
+
+GRR_glm_fit_df %>%
+  filter(outlier_direction == "Above fit") %>%
+  count(module, annotation, sort = TRUE) %>%
+  slice_max(n, n = 20, with_ties = FALSE) %>%
+  mutate(
+    max_n = max(n),
+    hjust_val = ifelse(n < threshold, 0, 1.1),
+    label_pos = ifelse(n < threshold, n + 2, n - 2)
+  ) %>%
+  ggplot(aes(x = reorder(module, n))) +
+  geom_col(aes(y = max_n), fill = "grey97", width = 0.8) +
+  geom_col(aes(y = n), fill = "seashell", width = 0.8) +
+  geom_text(
+    aes(y = label_pos, label = annotation, hjust = hjust_val),
+    size = 3, color = "black"
+  ) +
+  coord_flip(clip = "off") +
+  scale_y_continuous(
+    limits = c(0, max(GRR_glm_fit_df %>%
+      filter(outlier_direction == "Above fit") %>%
+      count(module) %>%
+      slice_max(n, n = 20, with_ties = FALSE) %>%
+      pull(n)) + 10),
+    expand = c(0, 0)
+  ) +
+  theme_minimal() +
+  theme(
+    plot.margin = margin(5.5, 100, 5.5, 5.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  ) +
+  labs(
+    title = "Top 20 modules with outliers ABOVE the GLM fit (RPTEC) (wDRW)",
+    x = "Module",
+    y = "Number of outliers above fit"
+  )
+```
+
+#### Outliers below the GLM fit
+
+```{r}
+threshold <- 400  # Threshold for annotation in plot
+
+GRR_glm_fit_df %>%
+  filter(outlier_direction == "Below fit") %>%
+  count(module, annotation, sort = TRUE) %>%
+  slice_max(n, n = 20, with_ties = FALSE) %>%
+  mutate(
+    max_n = max(n),
+    hjust_val = ifelse(n < threshold, 0, 1.1),       # outside or inside
+    label_pos = ifelse(n < threshold, n + 2, n - 2)  # offset label position
+  ) %>%
+  ggplot(aes(x = reorder(module, n))) +
+  
+  # Background bar
+  geom_col(aes(y = max_n), fill = "grey97", width = 0.8) +
+  
+  # Foreground bar (actual value)
+  geom_col(aes(y = n), fill = "lemonchiffon", width = 0.8) +
+  
+  # Smart annotation positioning
+  geom_text(
+    aes(y = label_pos, label = annotation, hjust = hjust_val),
+    size = 3, color = "black"
+  ) +
+  
+  coord_flip(clip = "off") +  # Flip axes for horizontal bars
+
+  # Y-axis limits: no exessive white space
+  scale_y_continuous(limits = c(0, max(GRR_glm_fit_df %>%
+    filter(outlier_direction == "Below fit") %>%
+    count(module) %>%
+    slice_max(n, n = 20, with_ties = FALSE) %>%
+    pull(n)) + 10)) +
+
+  theme_minimal() +
+  theme(
+    plot.margin = margin(5.5, 100, 5.5, 5.5),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank()
+  ) +
+  labs(
+    title = "Top 20 modules with outliers BELOW the GLM fit (RPTEC) (wDRW)",
+    x = "Module",
+    y = "Number of outliers below fit"
+  )
+```
+
+### Outliers per sample: above, below and total.
+
+Now, we will assess what conditions have the most outliers. Total, below and above the binomial GLM fit.
+
+```{r}
+outliers_per_sample %>%
+  top_n(20, n) %>%
+  ggplot(aes(x = reorder(sample_id, n), y = n)) +
+  geom_col(fill = "darkblue") +
+  coord_flip() +
+  theme_minimal() +
+  ggtitle("Top 20 conditions with significant wGRR outliers (RPTEC) (wDRW)") +
+  theme(
+    plot.title.position = "plot",
+    plot.title = element_text(hjust = 0),
+    plot.margin = margin(20, 20, 10, 40) # top, right, bottom, left
+  ) +
+  labs(
+    x = "Condition (sample_id)",
+    y = "Number of outliers"
+  )
+```
+
+```{r}
+GRR_glm_fit_df %>%
+  filter(outlier_direction == "Above fit") %>%
+  count(sample_id, sort = TRUE) %>%
+  top_n(20, n) %>%
+  ggplot(aes(x = reorder(sample_id, n), y = n)) +
+  geom_col(fill = "brown") +
+  coord_flip() +
+  theme_minimal() +
+  ggtitle("Top 20 conditions with outliers ABOVE the binomial GLM fit (RPTEC) (DRW)") +
+  theme(
+    plot.title.position = "plot",
+    plot.title = element_text(hjust = 0),
+    plot.margin = margin(20, 20, 10, 40)
+  ) +
+  labs(
+    x = "Condition (sample_id)",
+    y = "Number of outliers above fit"
+  )
+```
+
+```{r}
+GRR_glm_fit_df %>%
+  filter(outlier_direction == "Below fit") %>%
+  count(sample_id, sort = TRUE) %>%
+  slice_max(n, n = 20, with_ties = FALSE) %>%
+  ggplot(aes(x = reorder(sample_id, n), y = n)) +
+  geom_col(fill = "slateblue") +
+  coord_flip() +
+  theme_minimal() +
+  ggtitle("Top 20 conditions with outliers BELOW the binomial GLM fit (RPTEC) (wDRW)") +
+  theme(
+    plot.title.position = "plot",
+    plot.title = element_text(hjust = 0),
+    plot.margin = margin(20, 20, 10, 40)
+  ) +
+  labs(
+    x = "Condition (sample_id)",
+    y = "Number of outliers below fit"
+  )
+```
+
+# Outliers per number of modules * number of samples: density of outliers for comparison with other datasets and techniques.
+
+To compare this with PHH the number of outliers will be compared relative to the total modules and conditions. Also, to have a more arbitrary number to compare with the other topology-based scoring methods
+
+```{r}
+total_modules_all <- GRR_glm_fit_df %>%
+  filter(module_number != 0) %>%
+  summarise(n = n_distinct(module_number)) %>%
+  pull(n) # for normalization
+```
+
+
+```{r}
+total_conditions_all <- GRR_glm_fit_df %>%
+  filter(module_number != 0) %>%
+  summarise(n = n_distinct(sample_id)) %>%
+  pull(n) # for normalization
+```
+
+
+```{r}
+# Make a summarizing df for comparing with other datasets and scoring algorithms
+outlier_density <- GRR_glm_fit_df %>%
+  filter(outlier, module_number != 0) %>%
+  group_by(outlier_direction) %>%
+  summarise(
+    total_outliers = n(),
+    .groups = "drop"
+  ) %>%
+  bind_rows(
+    tibble(
+      outlier_direction = "Total",
+      total_outliers = sum(.$total_outliers)
+    )
+  ) %>%
+  mutate(
+    total_modules = total_modules_all,
+    total_conditions = total_conditions_all,
+    density = total_outliers / (total_modules * total_conditions)
+  )
+```
+
+```{r}
+print(outlier_density)
+```
+
+# Conclusion
+
+The wDRW shows less outliers and a more 'robust' fit than the EG score on the wGRR metric. This will be further improved by other DRW variants that weight the topological importance even more. (s-DRW and e-DRW)
