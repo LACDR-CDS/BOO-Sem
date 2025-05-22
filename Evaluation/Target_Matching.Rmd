@@ -281,11 +281,3 @@ drw_scores_PHH %>%
   head(20)
 ```
 
-
-
-# Inlezen
-ctd <- read_csv(path)
-
-# Bekijken
-
-
