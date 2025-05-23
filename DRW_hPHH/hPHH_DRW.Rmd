@@ -35,6 +35,7 @@ adj_matrix <- fread(file.path(data_dir, "adj_PHH.txt")) %>%
   as.matrix()
 ```
 
+The adj matrix reading gives a warning but reading in went well, so warning is ignored.
 
 # Introduction
 
@@ -45,7 +46,7 @@ First, the directions of the network will be constructed based on the correlatio
 After that, the random walker will be performed: 
 
 $$
-W_{t+1} = (1 - r) A^T W_t + r W_0
+W_{t+1} = (1 - r) A_{Mj} \cdot W_t + r W_0
 $$
 Here, the $r$ represents the restart probability, set at 0.7 (Hui et al). This represents the chance to return to the initial weight vector ($W_0$), which represents the "walker score" for each gene: -log10(padj) * abs(Log2FC). *The original article used t-values, but the degrees of freedom are not known. So the walker score is proposed.* The initial weights are only assigned to differentially expressed genes (padj < 0.05).
 
@@ -60,7 +61,7 @@ The recursive walker will be performed until the L1-norm ,the difference (delta)
 Afterwards, the module activty for module $M_j$ will be calculated with the following formula:
 
 $$
-wDRW(M_j) = \frac{ \sum_{i}^{n_j} W_\infty(g_i) \cdot |\log_2 \mathrm{FC}(g_i)| }{ \sqrt{ \sum_{i}^{n_j} \left( W_\infty(g_i) \right)^2 } }
+wDRW(M_j) = \frac{ \sum_{i}^{n_j} W_\infty(g_i) \cdot \left| \log_2 \mathrm{FC}(g_i) \right| }{n_j \cdot \sqrt{\sum_{i}^{n_j} \left( W_\infty(g_i) \right)^2 } }
 $$
 
 Here, the $W_{∞}$ represents the weight of each gene in the network and log2fc represents the expression value. The sum of all the $W_{∞}$ vector multiplied by the abs log2fc of the genes will be divided by the square root of the sum of the squared $W_{∞}$ vector for each gene. Only genes with a padj value < 0.05 will be used to construct the module activity. The result is an absolute DRW score that represents the network activation of a module.
@@ -114,11 +115,13 @@ But the TOM had different names. It has genenumber_at instead of id_genenumber. 
 
 ```{r}
 # Columns
-colnames(TOM) <- paste0("id_", gsub("_at$", "", colnames(TOM))) # remove _at at the end and add id_ at the front
+#colnames(TOM) <- paste0("id_", gsub("_at$", "", colnames(TOM))) # remove _at at the end and add id_ at the front
 
 # Rows
-rownames(TOM) <- paste0("id_", gsub("_at$", "", rownames(TOM))) # remove _at at the end and add id_ at the front
+#rownames(TOM) <- paste0("id_", gsub("_at$", "", rownames(TOM))) # remove _at at the end and add id_ at the front
 ```
+
+ensure that the TOM is a matrix 
 
 ```{r}
 is.matrix(TOM)
@@ -128,7 +131,7 @@ is.matrix(TOM)
 dim(TOM)
 head(TOM[, 1:5])
 ```
-
+Interestingly, the TOM of PHH has less genes than RPTEC. Due to microarray vs TempoSeq?
 
 ```{r}
 #saveRDS(TOM, file = "TOM_PHH.rds")
@@ -203,7 +206,7 @@ expression_cor_eg <- expression_joined %>%
 ```
 
 ```{r}
-sum(is.na(expression_cor_eg$corr_egs))
+sum(is.na(expression_cor_eg$cor_eg))
 ```
 
 ## Calculating the Directed Graph
@@ -698,14 +701,14 @@ No NA values
 The DRW scores will be normalized for their module_size.
 
 ```{r}
-drw_scores <- drw_scores %>%
-  left_join(
-    GRR_vs_eg_score %>% select(sample_id, module_number, module_size.x),
-    by = c("condition_id" = "sample_id", "module_nr" = "module_number")
-  ) %>%
-  mutate(
-    drw_zscore = drw_score / module_size.x
-  )
+#drw_scores <- drw_scores %>%
+ # left_join(
+  #  GRR_vs_eg_score %>% select(sample_id, module_number, module_size),
+   # by = c("condition_id" = "sample_id", "module_nr" = "module_number")
+  #) %>%
+  #mutate(
+   # drw_zscore = drw_score / module_size
+  #)
 ```
 
 ```{r}
@@ -714,8 +717,9 @@ sum(is.na(drw_scores$drw_zscore))
 
 No NA values
 
+
 ```{r}
-saveRDS(drw_scores, file = "drw_scores_PHH_directed.rds") # saving the drw_scores
+#saveRDS(drw_scores, file = "drw_scores_PHH_directed.rds") # saving the drw_scores
 ```
 
 
@@ -730,11 +734,10 @@ $$
 ## GRR
 
 ```{r}
-GRR_vs_DRW <- GRR_vs_eg_score %>%
+GRR_vs_DRW <- drw_scores %>%
   left_join(
-    drw_scores %>% 
-      select(-module_size),
-    by = c("sample_id" = "condition_id", "module_number" = "module_nr")
+    GRR_vs_eg_score %>% select(sample_id, module_number, GRR),
+    by = c("condition_id" = "sample_id", "module_nr" = "module_number")
   )
 ```
 
@@ -754,11 +757,13 @@ GRR_vs_DRW <- GRR_vs_eg_score %>%
 weighted_grr_df <- readRDS(file.path(data_dir, "GRR_vs_eg_score_PHH.rds"))
 ```
 
-
 ```{r}
 # Join the calculated wGRR with GRR_vs_DRW
 GRR_vs_DRW <- GRR_vs_DRW %>%
-  left_join(weighted_grr_df, by = c("sample_id", "module_number"))
+  left_join(
+    weighted_grr_df %>% select(sample_id, module_number, wGRR, sig_genes),
+    by = c("condition_id" = "sample_id", "module_nr" = "module_number")
+  )
 ```
 
 ```{r}
@@ -799,9 +804,9 @@ ggplot(GRR_vs_DRW, aes(x = drw_zscore, y = wGRR)) +
   geom_smooth(method = "lm", se = FALSE, color = "blue") +
   theme_minimal() +
   labs(
-    title = "Gene Response Rate vs DRW Score in PHH",
+    title = "Weighted Gene Response Rate vs DRW Score in PHH",
     x = "Weighted Directed Random Walk score (wDRW)",
-    y = "Gene Response Rate (GRR)"
+    y = "Weighted Gene Response Rate (wGRR)"
   )
 ```
 
@@ -832,7 +837,7 @@ GRR_glm_fit_df <- GRR_vs_DRW %>%
   mutate(
     fitted_prob = glm_predictions,
     fitted_sig_genes = fitted_prob * module_size,
-    residual = sig_genes.x - fitted_sig_genes,
+    residual = sig_genes - fitted_sig_genes,
     dev_resid = glm_dev_resid
   )
 ```
@@ -891,6 +896,12 @@ GRR_glm_fit_df <- GRR_glm_fit_df %>%
 ```
 
 ```{r}
+GRR_glm_fit_df <- GRR_glm_fit_df %>% 
+  mutate(module_number = module_nr, sample_id = condition_id) %>% 
+  select(-module_nr, - condition_id)
+```
+
+```{r}
 GRR_glm_fit_df <- GRR_glm_fit_df %>%
   mutate(module = paste0("hPHH_", module_number)) %>%
   left_join(module_annotation, by = "module")
@@ -945,7 +956,7 @@ Here, we will visualize the modules with the most outliers. Total, below and abo
 #### Total outliers from the GLM fit
 
 ```{r}
-threshold <- 300  # Same threshold
+threshold <- 100  # Same threshold
 
 GRR_glm_fit_df %>%
   filter(outlier) %>%
@@ -988,7 +999,7 @@ GRR_glm_fit_df %>%
 #### Outliers above the GLM fit
 
 ```{r}
-threshold <- 300  # Threshold for switching annotation position
+threshold <- 50  # Threshold for switching annotation position
 
 GRR_glm_fit_df %>%
   filter(outlier_direction == "Above fit") %>%
@@ -1031,7 +1042,7 @@ GRR_glm_fit_df %>%
 #### Outliers below the GLM fit
 
 ```{r}
-threshold <- 400  # Threshold for annotation in plot
+threshold <- 50  # Threshold for annotation in plot
 
 GRR_glm_fit_df %>%
   filter(outlier_direction == "Below fit") %>%

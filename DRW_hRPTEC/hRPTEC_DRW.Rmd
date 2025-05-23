@@ -39,6 +39,7 @@ After that, the random walker will be performed:
 $$
 W_{t+1} = (1 - r) A^T W_t + r W_0
 $$
+
 Here, the $r$ represents the restart probability, set at 0.7 (Hui et al). This represents the chance to return to the initial weight vector ($W_0$), which represents the "walker score" for each gene: -log10(padj) * abs(Log2FC). *The original article used t-values, but the degrees of freedom are not known. So the walker score is proposed.* 
 
 $$
@@ -702,19 +703,20 @@ No NA values
 The DRW scores will be normalized for their module_size and called the drw_zscore (it is not really a z-score but this is for simplification)
 
 ```{r}
-drw_scores <- drw_scores %>%
-  left_join(
-    GRR_vs_eg_score %>% select(sample_id, module_number, module_size),
-    by = c("condition_id" = "sample_id", "module_nr" = "module_number")
-  ) %>%
-  mutate(
-    drw_zscore = drw_score / module_size
-  )
+#drw_scores <- drw_scores %>%
+ # left_join(
+  #  GRR_vs_eg_score %>% select(sample_id, module_number, module_size),
+   # by = c("condition_id" = "sample_id", "module_nr" = "module_number")
+  #) %>%
+  #mutate(
+   # drw_zscore = drw_score / module_size
+  #)
 ```
 
 ```{r}
 sum(is.na(drw_scores$drw_zscore))
 ```
+
 ```{r}
 #saveRDS(drw_scores, file = "drw_scores_RPTEC_directed.rds") # saving the drw_scores
 ```
@@ -743,12 +745,13 @@ GRR_vs_DRW <- GRR_vs_eg_score %>%
 
 ## wGRR
 
+
 ```{r}
 weighted_grr_df <- expression_cor_eg %>%
   mutate(is_significant = as.numeric(abs(log2fc) > 1 & padj < 0.05)) %>%
   group_by(sample_id, module_number) %>%
   summarise(
-    wGRR = sum(is_significant * abs(cor_eg), na.rm = TRUE),
+    wGRR = sum(is_significant * cor_eg, na.rm = TRUE),
     .groups = "drop"
   )
 ```

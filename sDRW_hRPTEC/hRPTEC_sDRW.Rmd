@@ -596,7 +596,7 @@ compute_sdrw_score <- function(condition_id, module_nr, expression_df, TOM) {
   
   # Security: no zeros
   if (sum(W0) == 0 || any(is.na(W0))) {
-    return(tibble(condition_id = condition_id, module_nr = module_nr, drw_score = 0))
+    return(tibble(condition_id = condition_id, module_nr = module_nr, sdrw_score = 0))
   }
   
   # Normalization
@@ -624,7 +624,7 @@ compute_sdrw_score <- function(condition_id, module_nr, expression_df, TOM) {
     # Normalize to prevent weight explosion
     W_avg_sum <- sum(W_avg)
     if (W_avg_sum == 0 || is.na(W_avg_sum)) {
-      return(tibble(condition_id = condition_id, module_nr = module_nr, drw_score = 0))
+      return(tibble(condition_id = condition_id, module_nr = module_nr, sdrw_score = 0))
     }
     W_avg <- W_avg / W_avg_sum
   
@@ -731,12 +731,12 @@ with_progress({
 })
 ```
 ```{r}
-saveRDS(sdrw_scores, file = "drw_scores_RPTEC_directed.rds") # saving the drw_scores
+#saveRDS(sdrw_scores, file = "drw_scores_RPTEC_directed.rds") # saving the drw_scores
 ```
 
 
 ```{r}
-#sdrw_scores          <- readRDS(file.path(data_dir, "sdrw_scores_RPTEC_directed.rds")) # reading the drw_scores
+sdrw_scores          <- readRDS(file.path(data_dir, "sdrw_scores_RPTEC_directed.rds")) # reading the drw_scores
 ```
 
 
@@ -747,7 +747,10 @@ print(tail(sdrw_scores))
 
 
 ```{r}
-sum(is.na(sdsrw_scores$sdrw_score))
+sum(is.na(sdrw_scores$sdrw_score))
+```
+```{r}
+sdrw_scores$sdrw_score[is.na(sdrw_scores$sdrw_score)] <- 0
 ```
 
 No NA values
@@ -757,7 +760,7 @@ No NA values
 The DRW scores will be normalized for their module_size and called the drw_zscore (it is not really a z-score but this is for simplification)
 
 ```{r}
-drw_scores <- drw_scores %>%
+sdrw_scores <- sdrw_scores %>%
   left_join(
     GRR_vs_eg_score %>% select(sample_id, module_number, module_size),
     by = c("condition_id" = "sample_id", "module_nr" = "module_number")
@@ -768,7 +771,7 @@ drw_scores <- drw_scores %>%
 ```
 
 ```{r}
-sum(is.na(drw_scores$sdrw_zscore))
+sum(is.na(sdrw_scores$sdrw_zscore))
 ```
 ```{r}
 #saveRDS(drw_scores, file = "drw_scores_RPTEC_directed.rds") # saving the drw_scores
@@ -962,7 +965,7 @@ sum(GRR_glm_fit_df$outlier, na.rm = TRUE)
 There are 7134 outliers found. This is less than the eg score.
 
 ```{r}
-ggplot(GRR_glm_fit_df, aes(x = drw_zscore, y = wGRR)) +
+ggplot(GRR_glm_fit_df, aes(x = sdrw_zscore, y = wGRR)) +
   geom_point(aes(color = outlier), alpha = 0.6, size = 0.9) +
   geom_line(aes(y = fitted_sig_genes / module_size), color = "blue", size = 1) +
   scale_color_manual(values = c("black", "red")) +
