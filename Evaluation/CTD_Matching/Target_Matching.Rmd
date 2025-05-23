@@ -1,0 +1,636 @@
+---
+title: "CTD Validation"
+author: "Sem"
+date: "2025-05-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(readr)
+library(dplyr)
+library(stringr)
+library(purrr)
+library(ggplot2)
+```
+
+# Introduction
+
+In this .Rmd file, the top-k scoring modules are identified for different scoring algorithms and conditions. For each compound, the Reactome-based enrichment of these modules is compared to the compound enrichment from the Comparative Toxicogenomics Database(CTD) database. Only Reactome pathways were used for this comparison, as it was the only source shared between the module enrichment results and the CTD data. This analysis serves to evaluate the biological relevance of the proposed module scoring methods. It is assessed if there are matches between the databases (0= no match, 1 = 1 or more match). Then the accuracy for the top-k pathways per scoring method and dataset will be computed to evaluate if DRW based scoring provide more biologically accurate results
+
+## CTD data
+
+```{r}
+data_dir <- "C:/Users/semde/Documents/BOO_Scripts/Data/Evaluation"
+CTD_Pathways <- read_csv(
+  file.path(data_dir, "CTD_Pathways_enriched.csv"),
+  skip = 27,
+  show_col_types = FALSE
+)
+```
+
+## PHH data
+
+```{r}
+data_dir <- "C:/Users/semde/Documents/BOO_Scripts/Data/PHH_TXG-MAPr"
+module_enrichment_PHH   <- readRDS(file.path(data_dir, "module_enrichment.rds"))
+drw_scores_PHH <- readRDS(file.path(data_dir, "drw_scores_PHH_directed.rds"))
+eg_scores_PHH <- readRDS(file.path(data_dir, "eg_score.rds"))
+#sdrw_scores_PHH <- readRDS(file.path(data_dir, "sdrw_scores_PHH_directed.rds")) # not finished yet
+
+```
+
+## RPTEC data
+
+```{r}
+data_dir <- "C:/Users/semde/Documents/BOO_Scripts/Data/RPTEC_TXG-MAPr"
+module_enrichment_RPTEC   <- readRDS(file.path(data_dir, "module_enrichment.rds"))
+drw_scores_RPTEC <- readRDS(file.path(data_dir, "drw_scores_RPTEC_directed.rds"))
+eg_scores_RPTEC <- readRDS(file.path(data_dir, "eg_score.rds"))
+#sdrw_scores_RPTEC <- readRDS(file.path(data_dir, "sdrw_scores_RPTEC_directed.rds"))
+```
+
+# Preprocessing
+
+## CTD
+
+First row has NA due to weird csv (# in first line)
+
+```{r}
+CTD_Pathways_clean <- CTD_Pathways[-1, ]
+```
+
+Reactome is the only match between the module enrichment and CTD
+
+```{r}
+CTD_Pathways_reactome <- CTD_Pathways_clean %>%
+  filter(str_starts(PathwayID, "REACT:")) %>% 
+  filter(CorrectedPValue < 0.05)
+```
+
+```{r}
+glimpse(CTD_Pathways_reactome)
+```
+Filter the reactome code out of the Pathwayname for matching with the RPTEC dataset
+
+```{r}
+CTD_Pathways_reactome <- CTD_Pathways_reactome %>%
+  mutate(reactome_id = str_extract(PathwayID, "R-HSA-\\d+"))
+```
+
+
+## PHH
+
+### enrichment df
+
+Only include significantly enriched terms
+
+```{r}
+module_enrichment_PHH <- module_enrichment_PHH %>%
+  filter(padj < 0.05)
+```
+
+```{r}
+unique(module_enrichment_PHH$source)
+```
+Filter for only reactome terms
+
+```{r}
+module_enrichment_PHH_reactome <- module_enrichment_PHH %>%
+  filter(source == "CPDB:Reactome")
+```
+
+get the module_number
+
+```{r}
+module_enrichment_PHH_reactome <- module_enrichment_PHH_reactome %>%
+  mutate(module_number = str_remove(module, "^hPHH_"),
+         module_number = as.integer(module_number))
+```
+
+
+### eg_score df
+
+Strip for module numbers
+
+```{r}
+eg_scores_PHH <- eg_scores_PHH %>%
+  mutate(chemical = str_extract(sample_id, "(?<=TG_HPHH_SINGLE_)[^_]+")) %>% 
+  select(abs_eg_score, chemical, module_number)
+```
+
+### drw_score df
+
+```{r}
+drw_scores_PHH <- drw_scores_PHH %>%
+  mutate(chemical = str_extract(condition_id, "(?<=TG_HPHH_SINGLE_)[^_]+")) %>% 
+  mutate(module_number=module_nr) %>%
+  select(chemical, drw_zscore, module_number)
+  
+```
+
+
+## RPTEC
+
+```{r}
+module_enrichment_RPTEC <- module_enrichment_RPTEC %>%
+  filter(padj < 0.05)
+```
+
+```{r}
+unique(module_enrichment_RPTEC$source)
+```
+
+Filter for only reactome terms
+
+```{r}
+module_enrichment_RPTEC_reactome <- module_enrichment_RPTEC %>%
+  filter(source == "Reactome_2022")
+```
+
+```{r}
+module_enrichment_RPTEC_reactome <- module_enrichment_RPTEC_reactome %>%
+  mutate(term_id = str_extract(term, "R-HSA-\\d+"))
+```
+
+get the module number
+
+```{r}
+module_enrichment_RPTEC_reactome <- module_enrichment_RPTEC_reactome %>%
+  mutate(module_number = str_remove(module, "^hRPTECTERT1_"),
+         module_number = as.integer(module_number))
+```
+
+
+### eg_score df
+
+Strip for module numbers
+
+```{r}
+eg_scores_RPTEC <- eg_scores_RPTEC %>%
+  mutate(chemical = str_extract(sample_id, "(?<=LU_HRPTECTERT1_SINGLE_)[^_]+")) %>% 
+  select(abs_eg_score, chemical, module_number)
+```
+
+### drw_score df
+
+```{r}
+drw_scores_RPTEC <- drw_scores_RPTEC %>%
+  mutate(chemical = str_extract(condition_id, "(?<=LU_HRPTECTERT1_SINGLE_)[^_]+")) %>% 
+  mutate(module_number=module_nr) %>%
+  select(chemical, drw_zscore, module_number)
+  
+```
+
+# Seeing if there are matches
+
+To see if this analysis is possible, it was first checked to see if there are matches.
+
+For PHH matching needs to be done on strings, which makes it less good. But there are no reactome codes available. 
+
+```{r}
+# 1. Extract the two name‐vectors
+ctd_names   <- CTD_Pathways_reactome$PathwayName
+phh_names   <- module_enrichment_PHH_reactome$term
+
+# 2. Find exact overlaps
+common_names <- intersect(ctd_names, phh_names)
+
+# 3. Subset the enrichment table to only those matches
+matches_df_PHH <- module_enrichment_PHH %>%
+  filter(term %in% common_names)
+```
+
+```{r}
+nrow(matches_df_PHH)
+```
+For RPTEC matching could be done on R-HSA code.
+
+```{r}
+ctd_ids   <- CTD_Pathways_reactome$reactome_id
+rptec_ids <- module_enrichment_RPTEC_reactome$term_id
+
+# Find common id
+common_ids <- intersect(ctd_ids, rptec_ids)
+
+matches_df_RPTEC <- module_enrichment_RPTEC_reactome %>%
+  filter(term_id %in% common_ids)
+```
+
+```{r}
+nrow(matches_df_RPTEC)
+```
+
+
+The analysis seems possible as there are string matches between the CTD database and the PHH TXG-MAPr enrichment. And reactome_id matches between the RPTEC TXG-MAPr enrichment and PHH TXG-MAPr enrichment. It is noteable that there are less matches between the strings. THis could be an indication that the enrichment should be done again. But for now, not enough time. But then again there are also less overal enrichment terms for PHH.
+
+# PHH analysis
+
+## Preprocessing (again)
+
+First, the chemicals from TXG-MAPr have to match the chemical for the CTD database. This was manually done for the top k pathways
+
+### Arranging the CTD
+
+arranging the ctd database for manual mapping of the chemicals.
+
+```{r}
+CTD_chemicals_unique <- CTD_Pathways_reactome %>%
+  arrange(`# ChemicalName`) %>%
+  distinct(`# ChemicalName`, .keep_all = TRUE)
+```
+
+
+### eg_score
+
+```{r}
+eg_scores_PHH %>%
+  arrange(desc(abs_eg_score)) %>%
+  head(20)
+```
+
+```{r}
+eg_scores_PHH <- eg_scores_PHH %>%
+  mutate(chemical_ctd = case_when(
+    chemical == "DOXORUBICIN"     ~ "Doxorubicin",
+    chemical == "PAPAVERINE"  ~ "Papaverine",
+    chemical == "VALPROICACID"    ~ "Valproic Acid",
+    chemical == "CYCLOHEXIMIDE"    ~ "Cycloheximide",
+    chemical == "INTERFERONALPHAHUMAN" ~ "Interferon-alpha",
+    chemical == "TRANSFORMINGGROWTHFACTORBETA1" ~ "Transforming Growth Factor beta1",
+    chemical == "ETHIONINE" ~ "Ethionine",
+    chemical == "PHENOBARBITAL" ~ "Phenobarbital",
+    chemical == "CAFFEINE" ~ "Caffeine",
+    chemical == "BROMOETHYLAMINE" ~ "2-bromoethylamine",
+    chemical == "ALLYLALCOHOL" ~ "allyl alcohol",
+    chemical == "NEFAZODONE" ~ "nefazodone",
+    chemical == "THEOPHYLLINE" ~ "Theophylline",
+    chemical == "PHALLOIDIN" ~ "Phalloidine",
+    chemical == "OMEPRAZOLE" ~ "Omeprazole",
+    TRUE ~ chemical  # fallback to original if no match
+  ))
+```
+
+```{r}
+eg_scores_PHH %>%
+  arrange(desc(abs_eg_score)) %>%
+  head(50)
+```
+
+```{r}
+top50_results_PHH_eg <- eg_scores_PHH %>%
+  arrange(desc(abs_eg_score)) %>%
+  slice_head(n = 50) %>%
+  transmute(chemical_ctd,
+            module_nr = module_number,
+            abs_eg_score) %>%    # renaming because of joining problems
+  rowwise() %>%
+  mutate(
+    module_terms = list(
+      module_enrichment_PHH_reactome %>%
+        filter(
+          module_number == module_nr,       
+          source        == "CPDB:Reactome", # already did this but just to be sure
+          padj          <  0.05 # same
+        ) %>%
+        pull(term) %>%
+        unique()
+    ),
+    ctd_terms = list(
+      CTD_Pathways_reactome %>%
+        filter(
+          `# ChemicalName` == chemical_ctd,
+          CorrectedPValue  <  0.05
+        ) %>%
+        pull(PathwayName) %>%
+        unique()
+    ),
+    overlaps  = list(intersect(module_terms, ctd_terms)),
+    n_matches = length(overlaps),
+    has_match = as.integer(n_matches > 0)
+  ) %>%
+  ungroup() %>%
+  select(chemical_ctd,
+         module_number = module_nr,
+         n_matches,
+         has_match,
+         abs_eg_score)
+
+print(top50_results_PHH_eg)
+```
+
+
+### drw_score
+
+```{r}
+drw_scores_PHH %>%
+  arrange(desc(drw_zscore)) %>%
+  head(50)
+```
+
+
+```{r}
+drw_scores_PHH <- drw_scores_PHH %>%
+  mutate(chemical_ctd = case_when(
+    chemical == "OMEPRAZOLE"     ~ "Omeprazole",
+    chemical == "ISONIAZID"  ~ "Isoniazid",
+    chemical == "2NITROFLUORENE"    ~ "2-nitrofluorene",
+    chemical == "HEXACHLOROBENZENE" ~ "Hexachlorobenzene",
+    chemical == "SULINDAC" ~ "Sulindac",
+    chemical == "ACETAMIDOFLUORENE" ~ "4-acetylaminofluorene",
+    chemical == "FLUTAMIDE" ~ "Flutamide",
+    chemical == "MEXILETINE" ~ "Mexiletine",
+    chemical == "PHALLOIDIN" ~ "Phalloidine",
+    chemical == "ALLYLALCOHOL" ~ "allyl alcohol",
+    chemical == "DOXORUBICIN" ~ "Doxorubicin",
+    chemical == "NIFEDIPINE" ~ "Nifedipine",
+    chemical == "TNFALPHARAT" ~ "Tumor Necrosis Factors",
+    chemical == "CYCLOHEXIMIDE" ~ "Cycloheximide",
+    chemical == "ACETAMINOPHEN" ~ "Acetaminophen",
+    chemical == "ETHIONINE" ~ "Ethionine",
+    chemical == "INTERLEUKIN1BETAHUMAN" ~ "Interleukins",
+    chemical == "COLCHICINE" ~ "Colchicine",
+    chemical == "NAPROXEN" ~ "Naproxen",
+    chemical == "THEOPHYLLINE" ~ "Theophylline",
+    chemical == "VALPROICACID"    ~ "Valproic Acid",
+    chemical == "METHAPYRILENE" ~ "Methapyrilene",
+    chemical == "ROSIGLITAZONEMALEATE" ~ "Rosiglitazone",
+    chemical == "KETOCONAZOLE" ~ "Ketoconazole",
+    chemical == "PHENYLBUTAZONE" ~ "Phenylbutazone",
+    chemical == "NAPHTHYLISOTHIOCYANATE" ~ "1-Naphthylisothiocyanate",
+    TRUE ~ chemical  # fallback to original if no match
+  ))
+```
+
+```{r}
+drw_scores_PHH %>%
+  arrange(desc(drw_zscore)) %>%
+  head(50)
+```
+
+```{r}
+top50_results_PHH_drw <- drw_scores_PHH %>%
+  arrange(desc(drw_zscore)) %>%
+  slice_head(n = 50) %>%
+  transmute(chemical_ctd,
+            module_nr = module_number,
+            drw_zscore) %>%    # joining problems
+  rowwise() %>%
+  mutate(
+    module_terms = list(
+      module_enrichment_PHH_reactome %>%
+        filter(
+          module_number == module_nr,       
+          source        == "CPDB:Reactome", # to be sure
+          padj          <  0.05
+        ) %>%
+        pull(term) %>%
+        unique()
+    ),
+    ctd_terms = list(
+      CTD_Pathways_reactome %>%
+        filter(
+          `# ChemicalName` == chemical_ctd,
+          CorrectedPValue  <  0.05
+        ) %>%
+        pull(PathwayName) %>%
+        unique()
+    ),
+    overlaps  = list(intersect(module_terms, ctd_terms)),
+    n_matches = length(overlaps),
+    has_match = as.integer(n_matches > 0)
+  ) %>%
+  ungroup() %>%
+  select(chemical_ctd,
+         module_number = module_nr,   
+         n_matches,
+         has_match,
+         drw_zscore)
+
+print(top50_results_PHH_drw)
+```
+
+# RPTEC Analysis
+
+## eg scores
+
+```{r}
+eg_scores_RPTEC %>%
+  arrange(desc(abs_eg_score)) %>%
+  head(50)
+```
+
+```{r}
+eg_scores_RPTEC <- eg_scores_RPTEC %>%
+  mutate(chemical_ctd = case_when(
+    chemical == "DOXORUBICIN" ~ "Doxorubicin",
+    chemical == "ARISTOLOCHICACID" ~ "Aristolochic Acids",
+    chemical == "LEADACETATE" ~ "lead acetate",
+    chemical == "OCHRATOXINA" ~ "ochratoxin A",
+    chemical == "MITOMYCINC" ~ "mitomycin C-DNA adduct",
+    chemical == "CYCLOSPORINA" ~ "Cyclosporins",
+    chemical == "RAPAMYCIN" ~ "Sirolimus",
+    chemical == "CISPLATIN" ~ "Cisplatin",
+    chemical == "ZOLENDRONICACID" ~ "Zoledronic Acid",
+    TRUE ~ chemical  # fallback to original if no match
+  ))
+```
+
+```{r}
+eg_scores_RPTEC %>%
+  arrange(desc(abs_eg_score)) %>%
+  head(50)
+```
+
+```{r}
+top50_results_RPTEC_eg <- eg_scores_RPTEC %>%
+  arrange(desc(abs_eg_score)) %>%
+  slice_head(n = 50) %>%
+  transmute(chemical_ctd,
+            module_nr = module_number,
+            abs_eg_score) %>%    # joining problems
+  rowwise() %>%
+  mutate(
+    module_terms = list(
+      module_enrichment_RPTEC_reactome %>%
+        filter(
+          module_number == module_nr,        # to be sure
+          source        == "Reactome_2022",
+          padj          <  0.05
+        ) %>%
+        pull(term_id) %>%
+        unique()
+    ),
+    ctd_terms = list(
+      CTD_Pathways_reactome %>%
+        filter(
+          `# ChemicalName` == chemical_ctd,
+          CorrectedPValue  <  0.05
+        ) %>%
+        pull(reactome_id) %>%
+        unique()
+    ),
+    overlaps  = list(intersect(module_terms, ctd_terms)),
+    n_matches = length(overlaps),
+    has_match = as.integer(n_matches > 0)
+  ) %>%
+  ungroup() %>%
+  select(chemical_ctd,
+         module_number = module_nr,
+         n_matches,
+         has_match,
+         abs_eg_score)
+
+print(top50_results_RPTEC_eg)
+```
+
+
+## DRW scores
+
+```{r}
+drw_scores_RPTEC %>%
+  arrange(desc(drw_zscore)) %>%
+  head(50)
+```
+
+
+```{r}
+drw_scores_RPTEC <- drw_scores_RPTEC %>%
+  mutate(chemical_ctd = case_when(
+    chemical == "INTERLEUKIN1BETA" ~ "Interleukins",
+    chemical == "LEADACETATE" ~ "lead acetate",
+    chemical == "MITOMYCINC" ~ "mitomycin C-DNA adduct",
+    chemical == "ZOLENDRONICACID" ~ "Zoledronic Acid",
+    chemical == "RAPAMYCIN" ~ "Sirolimus",
+    chemical == "AMPHOTERICINB" ~ "Amphotericin B",
+    chemical == "ARISTOLOCHICACID" ~ "Aristolochic Acids",
+    chemical == "OCHRATOXINA" ~ "ochratoxin A",
+    chemical == "CYCLOSPORINA" ~ "Cyclosporins",
+    chemical == "DOXORUBICIN" ~ "Doxorubicin",
+    chemical == "CISPLATIN" ~ "Cisplatin",
+    chemical == "OMEPRAZOL"     ~ "Omeprazole",
+    chemical == "TUNICAMYCIN" ~ "Tunicamycin",
+    chemical == "PUROMYCIN" ~ "Puromycin",
+    chemical == "GENTAMYCIN" ~ "Gentamicins",
+    TRUE ~ chemical  # fallback to original if no match
+  ))
+```
+
+```{r}
+drw_scores_RPTEC %>%
+  arrange(desc(drw_zscore)) %>%
+  head(50)
+```
+
+```{r}
+top50_results_RPTEC_drw <- drw_scores_RPTEC %>%
+  arrange(desc(drw_zscore)) %>%
+  slice_head(n = 50) %>%
+  transmute(chemical_ctd,
+            module_nr = module_number,
+            drw_zscore) %>%    # rename module_nr: problems with joining
+  rowwise() %>%
+  mutate(
+    module_terms = list(
+      module_enrichment_RPTEC_reactome %>%
+        filter(
+          module_number == module_nr,     
+          source        == "Reactome_2022", # to be sure
+          padj          <  0.05
+        ) %>%
+        pull(term_id) %>%
+        unique()
+    ),
+    ctd_terms = list(
+      CTD_Pathways_reactome %>%
+        filter(
+          `# ChemicalName` == chemical_ctd,
+          CorrectedPValue  <  0.05
+        ) %>%
+        pull(reactome_id) %>%
+        unique()
+    ),
+    overlaps  = list(intersect(module_terms, ctd_terms)),
+    n_matches = length(overlaps),
+    has_match = as.integer(n_matches > 0)
+  ) %>%
+  ungroup() %>%
+  select(chemical_ctd,
+         module_number = module_nr,
+         n_matches,
+         has_match,
+         drw_zscore)
+
+print(top50_results_RPTEC_drw)
+```
+
+# Final Results
+
+The accuracy for the top k-values will be calculated.
+
+```{r}
+# List of top-k values
+k_values <- c(10, 20, 30, 40, 50) # for now k is in 10, 20, 30, 40, 50
+```
+
+
+```{r}
+# combined results
+result_dfs <- list(
+  RPTEC_drw = top50_results_RPTEC_drw,
+  RPTEC_eg  = top50_results_RPTEC_eg,
+  PHH_drw   = top50_results_PHH_drw,
+  PHH_eg    = top50_results_PHH_eg
+)
+```
+
+
+```{r}
+# Compute accuracy per dataset and k
+accuracy_results <- map_dfr(result_dfs, function(df) {
+  map_dfr(k_values, function(k) {
+    df_k <- df %>% slice_head(n = k)
+    tibble(
+      k         = k,
+      n_matches = sum(df_k$has_match, na.rm = TRUE),
+      accuracy  = n_matches / k
+    )
+  })
+}, .id = "dataset")
+```
+
+
+```{r}
+print(accuracy_results)
+```
+
+
+We want to compare across k. so pivot wide
+
+```{r}
+accuracy_wide <- accuracy_results %>%
+  select(dataset, k, accuracy) %>%
+  tidyr::pivot_wider(names_from = dataset, values_from = accuracy)
+```
+
+
+```{r}
+print(accuracy_wide)
+```
+Plot 
+
+```{r}
+ggplot(accuracy_results, aes(x = dataset, y = accuracy, fill = factor(k))) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(
+    title = "Accuracy of Top-k Scoring Pathway per Scoring Method",
+    x = "Scoring Algorithms and Dataset",
+    y = "Accuracy",
+    fill = "Top-k Pathways"
+  ) +
+  theme_minimal(base_size = 14)
+```
+
