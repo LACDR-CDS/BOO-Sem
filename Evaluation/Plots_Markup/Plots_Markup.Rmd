@@ -1,0 +1,63 @@
+---
+title: "Eval"
+author: "Sem"
+date: "2025-05-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(ggplot2)
+library(RColorBrewer)
+```
+
+# Introduction
+
+This .Rmd file is used to create nice plots for the report and presentation
+
+# PHH
+
+```{r}
+df_phh <- data.frame(
+  Algorithm = c("Eigengene", "Eigengene", "wDRW", "wDRW"),
+  Outlier_Direction = c("Underquantification", "Overquantification", "Underquantification", "Overquantification"),
+  density = c(0.030444465, 0.001257616, 0.028, 0.000676)
+)
+```
+
+```{r}
+# Zorg dat 'Below fit' onder 'Above fit' komt in stacking
+df_phh$Outlier_Direction <- factor(df_phh$Outlier_Direction, levels = c("Overquantification", "Underquantification"))
+
+# Plot
+ggplot(df_phh, aes(x = Algorithm, y = density, fill = Outlier_Direction)) +
+  geom_bar(stat = "identity") +
+  labs(y = "Outlier Density", x = "Scoring Algorithm", fill = "Outlier Direction") +
+  ggtitle("Stacked bar plot: Above vs Below Fit") +
+  theme_minimal() + scale_fill_brewer(palette = "BuPu")
+```
+
+# RPTEC
+
+```{r}
+df_rptec <- data.frame(
+  Algorithm = c("Eigengene", "Eigengene", "wDRW", "wDRW"),
+  Outlier_Direction = c("Underquantification", "Overquantification", "Underquantification", "Overquantification"),
+  density = c(0.11816872, 0.02527436, 0.0802, 0.0187)
+)
+```
+
+```{r}
+# Zorg dat 'Below fit' onder 'Above fit' komt in stacking
+df_rptec$Outlier_Direction <- factor(df_rptec$Outlier_Direction, levels = c("Overquantification", "Underquantification"))
+
+# Plot
+ggplot(df_rptec, aes(x = Algorithm, y = density, fill = Outlier_Direction)) +
+  geom_bar(stat = "identity") +
+  labs(y = "Outlier Density", x = "Scoring Algorithm", fill = "Outlier Direction") +
+  ggtitle("Stacked bar plot: Above vs Below Fit") +
+  theme_minimal() + scale_fill_brewer(palette = "Set2")
+```
