@@ -246,10 +246,19 @@ TOM_sub <- TOM[genes_in_TOM, genes_in_TOM]
 Again, if cor_eg(A) > cor_eg (B) then edge: A -> B. However, these edges will be reverted: a gene is important if other genes point to it (Liu et al, 2013)
 
 ```{r}
-D <- outer(cor_vec, cor_vec, FUN = function(x, y) as.numeric(x < y)) # reverted direction
-rownames(D) <- colnames(D) <- names(cor_vec)
+TOM_medians <- apply(TOM_sub, 1, median, na.rm = TRUE)
+```
 
-# Directed weighted adjacency matrix
+```{r}
+print(TOM_medians)
+```
+
+
+```{r}
+# Directional Graph based on TOM median
+D <- outer(TOM_medians, TOM_medians, FUN = function(x, y) as.numeric(x < y))
+rownames(D) <- colnames(D) <- names(TOM_medians)
+
 W_directed <- D * TOM_sub # Weight the directions with the TOM
 ```
 
@@ -310,7 +319,7 @@ The initial probability will be assigned on the earlier calculated walker score.
   
   # Select only the walker score for significant genes
   W0_sig <- expr_sub %>%
-    filter(entrez_id %in% rownames(A), padj < 0.05) %>%
+    filter(entrez_id %in% rownames(A)) %>% # , padj < 0.05 was left out to reduce over estimation
     select(entrez_id, walker_score) %>%
     tibble::deframe()
   
@@ -450,10 +459,10 @@ Calculate the activity of the module with the output $W_{∞}$ for the genes. On
 activity_df <- expression_joined %>%
   filter(sample_id == condition_id,
          entrez_id %in% names(W_inf),
-         padj < 0.05) %>%
+         padj < 0.05, abs(log2fc) > 1.0) %>%
   select(entrez_id, log2fc) %>%
   mutate(W_inf = W_inf[entrez_id],
-         term = W_inf * abs(log2fc))
+         term = W_inf * log2fc)
 
 numerator <- sum(activity_df$term, na.rm = TRUE)
 denominator <- sqrt(sum(activity_df$W_inf^2, na.rm = TRUE))
@@ -515,11 +524,14 @@ compute_drw_score <- function(condition_id, module_nr, expression_df, TOM) {
     return(tibble(condition_id = condition_id, module_nr = module_nr, drw_score = 0))
   } # To ensure not crashing the function
 
-  # Create directed edges: gene B -> gene A if cor(A) > cor(B) as explained above
-  D <- outer(cor_vec, cor_vec, FUN = function(x, y) as.numeric(x < y))
-  rownames(D) <- colnames(D) <- names(cor_vec)
+  # Create directed edges: gene B -> gene A if Median TOM(A) > median TOM(B) as explained above
+  TOM_medians <- apply(TOM_sub, 1, median, na.rm = TRUE)
 
-  # Weight the directed edges with TOM
+  # Directional Graph
+  D <- outer(TOM_medians, TOM_medians, FUN = function(x, y) as.numeric(x < y))
+  rownames(D) <- colnames(D) <- names(TOM_medians)
+
+  # Weight the directed edges by the TOM
   W_directed <- D * TOM_sub
 
   # Add ground node to avoid 0 out of degree nodes
@@ -554,7 +566,7 @@ compute_drw_score <- function(condition_id, module_nr, expression_df, TOM) {
   
   # Select only the walker score for significant genes
   W0_sig <- expr_sub %>%
-    filter(entrez_id %in% rownames(A), padj < 0.05) %>%
+    filter(entrez_id %in% rownames(A)) %>% #, padj < 0.05 
     select(entrez_id, walker_score) %>%
     tibble::deframe()
   
@@ -598,10 +610,11 @@ compute_drw_score <- function(condition_id, module_nr, expression_df, TOM) {
     filter(sample_id == condition_id,
            module_number == module_nr,
            entrez_id %in% names(W_inf),
-           padj < 0.05) %>%
+           padj < 0.05,
+           abs(log2fc) > 1.0) %>%
     select(entrez_id, log2fc) %>%
     mutate(W_inf = W_inf[entrez_id],
-           term = W_inf * abs(log2fc))
+           term = W_inf * log2fc)
 
   numerator <- sum(activity_df$term, na.rm = TRUE)
   denominator <- sqrt(sum(activity_df$W_inf^2, na.rm = TRUE))
@@ -682,7 +695,7 @@ with_progress({
 
 
 ```{r}
-drw_scores          <- readRDS(file.path(data_dir, "drw_scores_RPTEC_directed.rds")) # reading the drw_scores
+drw_scores          <- readRDS(file.path(data_dir, "drw_scores_RPTEC_r0.7.rds")) # reading the drw_scores
 ```
 
 
@@ -748,7 +761,7 @@ GRR_vs_DRW <- GRR_vs_eg_score %>%
 
 ```{r}
 weighted_grr_df <- expression_cor_eg %>%
-  mutate(is_significant = as.numeric(abs(log2fc) > 1 & padj < 0.05)) %>%
+  mutate(is_significant = sign(log2fc) * as.numeric(abs(log2fc) > 1 & padj < 0.05)) %>%
   group_by(sample_id, module_number) %>%
   summarise(
     wGRR = sum(is_significant * cor_eg, na.rm = TRUE),
@@ -800,7 +813,7 @@ DRW score also logarithmic distributed due to using the abs(log2fc) in the pathw
 ## Visualize GRR vs DRW score with a linear fit
 
 ```{r}
-ggplot(GRR_vs_DRW, aes(x = drw_zscore, y = wGRR)) +
+ggplot(GRR_vs_DRW, aes(x = abs(drw_zscore), y = abs(wGRR))) +
   geom_point(alpha = 0.6) +
   geom_smooth(method = "lm", se = FALSE, color = "blue") +
   theme_minimal() +
@@ -822,7 +835,7 @@ glm_data <- GRR_vs_DRW %>%
 
 ```{r}
 glm_fit <- glm(
-  wGRR ~ drw_zscore,
+  abs(wGRR) ~ abs(drw_zscore),
   data = glm_data,
   family = quasibinomial(link = "logit") # quasibinomial as the wGRR is a proportion multiplied by a continuous variable, the cor_eg.
 )
@@ -834,19 +847,18 @@ glm_predictions <- predict(glm_fit, type = "response")
 glm_dev_resid <- residuals(glm_fit, type = "deviance")
 
 # Combine into a new dataframe
-GRR_glm_fit_df <- GRR_vs_DRW %>%
+GRR_glm_fit_df <- glm_data %>%
   mutate(
-    fitted_prob = glm_predictions,
-    fitted_sig_genes = fitted_prob * module_size,
-    residual = sig_genes - fitted_sig_genes,
+    fitted_wGRR = glm_predictions,
+    wGRR_resid = abs(wGRR) - fitted_wGRR,
     dev_resid = glm_dev_resid
   )
 ```
 
 ```{r}
-ggplot(GRR_glm_fit_df, aes(x = drw_zscore, y = wGRR)) +
+ggplot(GRR_glm_fit_df, aes(x = abs(drw_zscore), y = abs(wGRR))) +
   geom_point(alpha = 0.5, size = 0.8) +
-  geom_line(aes(y = fitted_sig_genes / module_size), color = "blue", size = 1) +
+  geom_line(aes(y = fitted_wGRR), color = "blue", size = 1) +
   theme_minimal() +
   labs(
     title = "Binomial GLM fit: wGRR vs DRW in RPTEC",
@@ -876,20 +888,16 @@ For each module and sample, we compare the observed number of significant genes 
 ```{r}
 GRR_glm_fit_df <- GRR_glm_fit_df %>%
   mutate(
-    se_fit = sqrt(module_size * fitted_prob * (1 - fitted_prob)),
-    z_score = (sig_genes - fitted_sig_genes) / se_fit,
+    se_fit = sqrt(fitted_wGRR * (1 - fitted_wGRR) / module_size),
+    z_score = wGRR_resid / se_fit,
     p_value = 2 * pnorm(-abs(z_score))  # two-sided test
   )
 ```
 
 ```{r}
 GRR_glm_fit_df <- GRR_glm_fit_df %>%
-  mutate(outlier = p_value < 0.05)
-```
-
-```{r}
-GRR_glm_fit_df <- GRR_glm_fit_df %>%
   mutate(
+    outlier = p_value < 0.05,
     outlier_direction = case_when(
       outlier & z_score > 0 ~ "Above fit",
       outlier & z_score < 0 ~ "Below fit",
@@ -910,17 +918,30 @@ sum(GRR_glm_fit_df$outlier, na.rm = TRUE)
 There are 7134 outliers found. This is less than the eg score.
 
 ```{r}
-ggplot(GRR_glm_fit_df, aes(x = drw_zscore, y = wGRR)) +
+ggplot(GRR_glm_fit_df, aes(x = abs(drw_zscore), y = abs(wGRR))) +
   geom_point(aes(color = outlier), alpha = 0.6, size = 0.9) +
-  geom_line(aes(y = fitted_sig_genes / module_size), color = "blue", size = 1) +
+  geom_line(aes(y = fitted_wGRR), color = "blue", size = 1) +
   scale_color_manual(values = c("black", "red")) +
   theme_minimal() +
   labs(
-    title = "wGRR vs DRW Score with Significant Outliers in RPTEC",
+    title = "abs(wGRR) vs abs(DRW) Score with Significant Outliers in RPTEC",
     x = "Weighted Directed Random Walk Score (wDRW)",
     y = "Weighted Gene Response Rate (wGRR)"
   )
 ```
+```{r}
+ggplot(GRR_glm_fit_df, aes(x = drw_zscore, y = abs(wGRR))) +
+  geom_point(aes(color = outlier), alpha = 0.6, size = 0.9) +
+  geom_line(aes(y = fitted_wGRR), color = "blue", size = 1) +
+  scale_color_manual(values = c("black", "red")) +
+  theme_minimal() +
+  labs(
+    title = "abs(wGRR) vs DRW Score with Significant Outliers in RPTEC",
+    x = "Weighted Directed Random Walk Score (wDRW)",
+    y = "Weighted Gene Response Rate (wGRR)"
+  )
+```
+
 This fit shows, visually, less over and under quantification compared to the EG. especially the high EG scores (overquantification) with 0 gene responses are not present. However, the fit still shows some underquantification. But overall, this scoring shows less randomness than the eg scoring method in the proposed 
 
 ## Modules and conditions with most significant outliers'

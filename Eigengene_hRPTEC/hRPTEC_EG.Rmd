@@ -251,7 +251,7 @@ ggplot(GRR_vs_eg_score, aes(x = wGRR)) +
 ## Visualize GRR vs abs EG score with a linear fit
 
 ```{r}
-ggplot(GRR_vs_eg_score, aes(x = abs_eg_score, y = wGRR)) +
+ggplot(GRR_vs_eg_score, aes(x = abs(eg_score), y = abs(wGRR))) +
   geom_point(alpha = 0.6) +
   geom_smooth(method = "lm", se = FALSE, color = "blue") +
   theme_minimal() +
@@ -270,12 +270,13 @@ The linear fit does not follow the trend of the wGRR vs abs EG, as expected due 
 
 ```{r}
 glm_data <- GRR_vs_eg_score %>%
-  filter(!is.na(wGRR), !is.na(abs_eg_score)) # This filtering was performed as the fit was first tested on a subset, but the filtering is irrelevant for the whole dataset as there are no NAs
+  filter(!is.na(wGRR), !is.na(eg_score)) # This filtering was performed as the function was first tested on a subset, but the filtering is irrelevant for the whole dataset as there are no NAs
 ```
+
 
 ```{r}
 glm_fit <- glm(
-  wGRR ~ abs_eg_score,
+  abs(wGRR) ~ abs(eg_score),
   data = glm_data,
   family = quasibinomial(link = "logit") # quasibinomial as the wGRR is a proportion multiplied by a continuous variable, the cor_eg.
 )
@@ -287,28 +288,27 @@ glm_predictions <- predict(glm_fit, type = "response")
 glm_dev_resid <- residuals(glm_fit, type = "deviance")
 
 # Combine into a new dataframe
-GRR_glm_fit_df <- GRR_vs_eg_score %>%
+GRR_glm_fit_df <- glm_data %>%
   mutate(
-    fitted_prob = glm_predictions,
-    fitted_sig_genes = fitted_prob * module_size,
-    residual = sig_genes - fitted_sig_genes,
+    fitted_wGRR = glm_predictions,
+    wGRR_resid = abs(wGRR) - fitted_wGRR,
     dev_resid = glm_dev_resid
   )
 ```
 
-### Evaluating the fit
-
 ```{r}
-ggplot(GRR_glm_fit_df, aes(x = abs_eg_score, y = wGRR)) +
+ggplot(GRR_glm_fit_df, aes(x = abs(eg_score), y = abs(wGRR))) +
   geom_point(alpha = 0.5, size = 0.8) +
-  geom_line(aes(y = fitted_sig_genes / module_size), color = "blue", size = 1) +
+  geom_line(aes(y = fitted_wGRR), color = "blue", size = 1) +
   theme_minimal() +
   labs(
-    title = "Binomial GLM fit: wGRR vs Abs Eigengene Score in RPTEC",
-    x = "Absolute Eigengene Score",
+    title = "Binomial GLM fit: wGRR vs eg score in RPTEC",
+    x = "Absolute Eigengene Score (EG)",
     y = "Weighted Gene Response Rate (wGRR)"
   )
 ```
+
+Visually, there are less outlying points using the DRW score than using the abs Eigengene score.
 
 ```{r}
 summary(glm_fit)
@@ -322,27 +322,23 @@ deviance(glm_fit) / df.residual(glm_fit)
 1 - (glm_fit$deviance / glm_fit$null.deviance)
 ```
 
-### Significant outliers 
+### significant outliers 
 
-For each module and sample, we compare the observed number of significant genes to the expected number based on the binomial GLM, and calculate a two-sided z-score and p-value using the binomial standard error. By doing this, the significant outlying modules from the glm fit are identified. Above and Below fit genes are identified for later analysis.
+For each module and sample, we compare the observed number of significant genes to the expected number based on the binomial GLM, and calculate a two-sided z-score and p-value using the binomial standard error. By doing this, the significant outlying modules from the glm fit are identified.
 
 ```{r}
 GRR_glm_fit_df <- GRR_glm_fit_df %>%
   mutate(
-    se_fit = sqrt(module_size * fitted_prob * (1 - fitted_prob)),
-    z_score = (sig_genes - fitted_sig_genes) / se_fit,
+    se_fit = sqrt(fitted_wGRR * (1 - fitted_wGRR) / module_size),
+    z_score = wGRR_resid / se_fit,
     p_value = 2 * pnorm(-abs(z_score))  # two-sided test
   )
 ```
 
 ```{r}
 GRR_glm_fit_df <- GRR_glm_fit_df %>%
-  mutate(outlier = p_value < 0.05)
-```
-
-```{r}
-GRR_glm_fit_df <- GRR_glm_fit_df %>%
   mutate(
+    outlier = p_value < 0.05,
     outlier_direction = case_when(
       outlier & z_score > 0 ~ "Above fit",
       outlier & z_score < 0 ~ "Below fit",
@@ -360,19 +356,31 @@ GRR_glm_fit_df <- GRR_glm_fit_df %>%
 ```{r}
 sum(GRR_glm_fit_df$outlier, na.rm = TRUE)
 ```
-
-a total of 10352 outliers from the fit are found.
+There are 7345 outliers found. This is less than the eg score.
 
 ```{r}
-ggplot(GRR_glm_fit_df, aes(x = abs_eg_score, y = wGRR)) +
+ggplot(GRR_glm_fit_df, aes(x = abs(eg_score), y = abs(wGRR))) +
   geom_point(aes(color = outlier), alpha = 0.6, size = 0.9) +
-  geom_line(aes(y = fitted_sig_genes / module_size), color = "blue", size = 1) +
+  geom_line(aes(y = fitted_wGRR), color = "blue", size = 1) +
   scale_color_manual(values = c("black", "red")) +
   theme_minimal() +
   labs(
-    title = "wGRR vs Abs EG Score with Significant Outliers in RPTEC",
-    x = "Absolute Eigengene Score (EG))",
-    y = "Weighted Gene Response Rate (GRR)"
+    title = "abs(wGRR) vs abs(EG Score) with Significant Outliers in RPTEC",
+    x = "Absolute Eigengene Score (EG)",
+    y = "Absolute Weighted Gene Response Rate (wGRR)"
+  )
+```
+
+```{r}
+ggplot(GRR_glm_fit_df, aes(x = eg_score, y = abs(wGRR))) +
+  geom_point(aes(color = outlier), alpha = 0.6, size = 0.9) +
+  geom_line(aes(y = fitted_wGRR), color = "blue", size = 1) +
+  scale_color_manual(values = c("black", "red")) +
+  theme_minimal() +
+  labs(
+    title = "abs(wGRR) vs EG Score with Significant Outliers in RPTEC",
+    x = "Eigengene Score (EG)",
+    y = "Absolute Weighted Gene Response Rate (wGRR)"
   )
 ```
 
