@@ -15,6 +15,10 @@ library(RColorBrewer)
 library(dplyr)
 library(stringr)
 library(ggplot2)
+library(viridis)
+library(ggnewscale)
+library(ggh4x)
+library(svglite)
 ```
 
 # Introduction
@@ -126,7 +130,7 @@ Strip for module numbers and conditions
 Strip for module numbers
 
 ```{r}
-eg_scores_RPTEC <- eg_scores_RPTEC %>%
+eg_scores_RPTEC_clean <- eg_scores_RPTEC %>%
   mutate(
     chemical = str_extract(sample_id, "(?<=LU_HRPTECTERT1_SINGLE_)[^_]+"),
     time = factor(str_extract(sample_id, "_T[12]") %>% str_remove("_")),
@@ -138,14 +142,23 @@ eg_scores_RPTEC <- eg_scores_RPTEC %>%
 ### drw_score df
 
 ```{r}
-drw_scores_RPTEC <- drw_scores_RPTEC %>%
+drw_scores_RPTEC_clean <- drw_scores_RPTEC %>%
   mutate(
     chemical = str_extract(condition_id, "(?<=LU_HRPTECTERT1_SINGLE_)[^_]+"),
-    time = factor(str_extract(condition_id, "_T[12]") %>% str_remove("_")),
+    base_string = substr(condition_id, 1, nchar(condition_id) - 3),
+    
+    time = substr(base_string, nchar(base_string) - 1, nchar(base_string)),
+    time = factor(time, levels = c("T1", "T2", "T3")),
+    
+    # Zet om naar factor
     concentration = factor(str_extract(condition_id, "C[0-9]+")),
     module_number = module_nr
   ) %>%
   select(chemical, time, concentration, drw_zscore, module_number)
+```
+
+```{r}
+summary(drw_scores_RPTEC_clean)
 ```
 
 
@@ -159,12 +172,12 @@ selected_modules <- c(12, 263, 35, 260, 33, 40, 109, 162, 211, 235,
                       15, 44, 46, 254, 16, 19, 134, 240, 288, 50, 56)
 
 # Filter DRW
-drw_filtered <- drw_scores_RPTEC %>%
+drw_filtered <- drw_scores_RPTEC_clean %>%
   filter(chemical %in% selected_chemicals,
          module_number %in% selected_modules)
 
 # Filter EG
-eg_filtered <- eg_scores_RPTEC %>%
+eg_filtered <- eg_scores_RPTEC_clean %>%
   filter(chemical %in% selected_chemicals,
          module_number %in% selected_modules)
 ```
@@ -173,19 +186,50 @@ eg_filtered <- eg_scores_RPTEC %>%
 ### Plot Heatmap
 
 ```{r}
-ggplot(drw_filtered, aes(x = concentration, y = factor(module_number), fill = drw_zscore)) +
-  geom_tile(color = "white") +
-  facet_grid(rows = vars(chemical), cols = vars(time)) +
-  scale_fill_viridis_c(name = "DRW z-score") +
-  labs(x = "Concentration", y = "Module") +
-  theme_minimal(base_size = 10) +
-  theme(
-    axis.text.y = element_text(size = 6),
-    strip.text = element_text(size = 8),
-    legend.position = "right"
+drw_filtered <- drw_filtered %>%
+  mutate(
+    chemical = factor(chemical, levels = selected_chemicals),
+    time = factor(time, levels = c("T1", "T2", "T3")),
+    concentration = factor(concentration, levels = c("C1", "C2", "C3")),
+    module_number = factor(module_number, levels = sort(selected_modules))
   )
 ```
 
+
+```{r}
+# Plot
+p <- ggplot(drw_filtered, aes(x = concentration, y = module_number, fill = drw_zscore)) +
+  geom_tile(color = "gray80", width = 0.95, height = 0.95) +  # grid zichtbaar met grijze rand
+  facet_nested(
+    ~ chemical + time,
+    nest_line = element_line(linewidth = 0.3),
+    switch = "x"
+  ) +
+  scale_fill_gradient2(
+    low = "#2166AC", mid = "white", high = "#B2182B",
+    midpoint = 0, name = "DRW z-score",
+    limits = c(-max(abs(drw_filtered$drw_zscore)), max(abs(drw_filtered$drw_zscore)))
+  ) +
+  labs(x = NULL, y = "Module") +
+  coord_fixed() +
+  theme_minimal(base_size = 10) +
+  theme(
+    axis.text.x = element_text(angle = 0, hjust = 0.5, size = 6),
+    axis.text.y = element_text(size = 6),
+    strip.placement = "outside",
+    strip.text.x = element_text(size = 8),
+    panel.spacing.x = unit(0.3, "lines"),
+    panel.grid = element_blank(),
+    legend.position = "right"
+  )
+
+print(p)
+```
+
+```{r}
+# Sla op als PDF (geschikt voor Inkscape)
+ggsave("heatmap_base.svg", plot = p, width = 12, height = 6, device = "svg")
+```
 
 
 
