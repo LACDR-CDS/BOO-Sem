@@ -1,0 +1,2014 @@
+---
+title: "Fig5B"
+author: "Hugo van Kessel and Sem de Groot"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Library
+
+```{r library, include=TRUE, echo=FALSE}
+library(data.table)
+library(dplyr)
+library(ggplot2)
+library(colorspace)
+library(ComplexHeatmap)
+library(tibble)
+library(stringr)
+library(tidyr)
+library(purrr)
+library(circlize)
+library(tools)
+library(Cairo)
+library(RColorBrewer)
+```
+
+# Introduction
+
+This .Rmd file contains the adapted heatmap code from Hugo to work on wDRW scores in the RPTEC dataset and to work on both EG and wDRW scores in the PHH dataset.
+
+## Function
+
+```{r, function, include=TRUE, echo=FALSE}
+loadDirRDS <- function(path){
+  filePaths <- list.files(path = path, pattern = ".rds", full.names = T)
+  purrr::map(setNames(filePaths, tools::file_path_sans_ext(basename(filePaths))), ~readRDS(.x))
+}
+```
+
+## PHH data
+
+```{r}
+data_dir <- "C:/Users/semde/Documents/BOO_Scripts/Data/PHH_TXG-MAPr"
+module_enrichment_PHH   <- readRDS(file.path(data_dir, "module_enrichment.rds"))
+drw_scores_PHH <- readRDS(file.path(data_dir, "drw_scores_PHH_directed.rds"))
+eg_scores_PHH <- readRDS(file.path(data_dir, "eg_score.rds"))
+```
+
+## RPTEC data
+
+```{r}
+data_dir <- "C:/Users/semde/Documents/BOO_Scripts/Data/RPTEC_TXG-MAPr"
+module_enrichment_RPTEC   <- readRDS(file.path(data_dir, "module_enrichment.rds"))
+drw_scores_RPTEC <- readRDS(file.path(data_dir, "drw_scores_RPTEC_r0.7.rds"))
+eg_scores_RPTEC <- readRDS(file.path(data_dir, "eg_score.rds"))
+```
+
+# RPTEC Eigengene
+
+## Import
+
+```{r, import, include=TRUE, echo=TRUE}
+rptec <- list(eg_score = NULL)
+
+rptec$eg_score <- eg_scores_RPTEC
+
+sem <- eg_scores_RPTEC |> 
+  rename(sample_id = sample_id, module_number = module_number, eg_score = eg_score)
+
+rptec$eg_score <- rptec$eg_score |> 
+  filter(module_number != 0) |>  rows_update(y = sem |> select(sample_id, module_number, eg_score), by = c("sample_id", "module_number"), unmatched = "ignore")
+```
+
+
+## Wrangle
+
+```{r, wrangle, include=TRUE, echo=TRUE}
+selected_modules <- bind_rows(
+  data.frame(KE = "Mitochondria", module = paste("hRPTECTERT1",sort(c(134,19,288,240)), sep = "_")),
+  data.frame(KE = "Endoplasmic Reticulum", module = paste("hRPTECTERT1",sort(c(40,33,235,162,109,211)), sep = "_")),
+  data.frame(KE = "Lysosome", module = paste("hRPTECTERT1",c(16), sep = "_")),
+  data.frame(KE = "Cell Cycle", module = paste("hRPTECTERT1",c(12, 263), sep = "_")),
+  data.frame(KE = "Inflammation", module = paste("hRPTECTERT1",sort(c(15, 44, 46, 254)), sep = "_")),
+  data.frame(KE = "Oxidative Stress", module = paste("hRPTECTERT1",c(50,56), sep = "_")),
+  data.frame(KE = "DNA Damage", module = paste("hRPTECTERT1",sort(c(260,35)), sep = "_"))) |> 
+  mutate(module = str_remove(module, "hRPTECTERT1_")) |> 
+  column_to_rownames("module") |> 
+  arrange(match(KE, c("Cell Cycle", "Inflammation", "DNA Damage", "Lysosome", "Oxidative Stress", "Endoplasmic Reticulum", "Mitochondria"))) |> 
+  rename(`KE Group` = "KE")
+
+data <- rptec$eg_score |> 
+  filter(module_number %in% rownames(selected_modules)) |> 
+  select(sample_id, module, eg_score) |> 
+  pivot_wider(names_from = "module", values_from = "eg_score") |> 
+  rename_with(~ str_remove(., "hRPTECTERT1_"),
+              .cols = where(is.numeric)) |> 
+  column_to_rownames(var = "sample_id") |> 
+  t() |> 
+  as.matrix()
+
+
+##### ADJUST COLOR HERE #####
+seq_vals <- c(-10, -3, -2, -1, 0, 1, 2, 3, 10)
+
+col_fun <- colorRamp2(
+  seq_vals,
+  colorspace::diverging_hcl(length(seq_vals), palette = "Blue-Red 3")
+)
+
+topcolor = list(
+  "time" = set_names(x = rev(colorspace::sequential_hcl(n = 2+1, palette = "Greens"))[-1], 
+                     nm = c("8", "24")),
+  "conc_level" = set_names(x = rev(colorspace::sequential_hcl(n = 3+1, palette = "Reds"))[-1],
+                           nm = c("1", "2", "3")))
+
+##### ADJUST HEATMAP CELL SIZE HERE ######
+size = 5
+WIDTH_FACTOR = size * 1.2
+HEIGHT_FACTOR = size * 1.2
+
+row_split <- setNames(object = selected_modules$`KE Group`, nm = rownames(selected_modules))
+row_split <- factor(row_split, levels = sort(unique(row_split)))
+
+name = "DOXORUBICIN"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix)) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+
+heatmap1 <- Heatmap(matrix = matrix, cluster_columns = F, cluster_rows = F, show_column_names = F,
+                    column_title = toTitleCase(tolower(name)),
+                    
+                    row_title = NULL,
+                    
+                    column_title_gp = gpar(fontsize = 15, fontface = 2),
+                    width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                    height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                    col = col_fun, 
+                    show_heatmap_legend = F,
+                    row_split = row_split, row_gap = unit(0.15, "cm"),
+                    top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                         filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |> 
+                                                         distinct(sample_id, time, conc_level) |> 
+                                                         arrange(time, conc_level) |> 
+                                                         mutate(time = factor(time, levels = c("8", "24"))) |> 
+                                                         column_to_rownames("sample_id"),
+                                                       col = list(time = topcolor$time,
+                                                                  conc_level = topcolor$conc_level),
+                                                       annotation_label = c("Time (h)", "Concentration level"),
+                                                       show_annotation_name = F,
+                                                       
+                                                       annotation_legend_param = list(
+                                                         time = list(title = "Time (h)",
+                                                                     direction = "horizontal",
+                                                                     nrow = 1,
+                                                                     title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                     labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                         conc_level = list(title = "Concentration level",
+                                                                           direction = "horizontal",
+                                                                           nrow = 1,
+                                                                           title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                           labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                       )
+                    )
+)
+
+name = "GENTAMYCIN"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix)) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+heatmap2 <- Heatmap(matrix = matrix, cluster_columns = F, cluster_rows = F, show_column_names = F,
+                    column_title = toTitleCase(tolower(name)),
+                    column_title_gp = gpar(fontsize = 15, fontface = 2),
+                    width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                    height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                    col = col_fun, 
+                    show_heatmap_legend = F,
+                    row_split = row_split, row_gap = unit(0.15, "cm"),
+                    top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                         filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |> 
+                                                         distinct(sample_id, time, conc_level) |> 
+                                                         arrange(time, conc_level) |> 
+                                                         mutate(time = factor(time, levels = c("8", "24"))) |> 
+                                                         column_to_rownames("sample_id"),
+                                                       col = list(time = topcolor$time,
+                                                                  conc_level = topcolor$conc_level),
+                                                       annotation_label = c("Time (h)", "Concentration level"),
+                                                       show_annotation_name = F,
+                                                       
+                                                       annotation_legend_param = list(
+                                                         time = list(title = "Time (h)",
+                                                                     direction = "horizontal",
+                                                                     nrow = 1,
+                                                                     title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                     labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                         conc_level = list(title = "Concentration level",
+                                                                           direction = "horizontal",
+                                                                           nrow = 1,
+                                                                           title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                           labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                       )
+                    )
+)
+
+name = "LEADACETATE"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix)) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+heatmap3 <- Heatmap(matrix = matrix, cluster_columns = F, cluster_rows = F, show_column_names = F,
+                    column_title = "Lead(II) acetate",
+                    column_title_gp = gpar(fontsize = 15, fontface = 2),
+                    width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                    height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                    col = col_fun,
+                    show_heatmap_legend = F,
+                    row_split = row_split, row_gap = unit(0.15, "cm"),
+                    top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                         filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |>
+                                                         distinct(sample_id, time, conc_level) |>
+                                                         arrange(time, conc_level) |>
+                                                         mutate(time = factor(time, levels = c("8", "24"))) |>
+                                                         column_to_rownames("sample_id"),
+                                                       col = list(time = topcolor$time,
+                                                                  conc_level = topcolor$conc_level),
+                                                       annotation_label = c("Time (h)", "Concentration level"),
+                                                       show_annotation_name = F,
+                                                       
+                                                       annotation_legend_param = list(
+                                                         time = list(title = "Time (h)",
+                                                                     direction = "horizontal",
+                                                                     nrow = 1,
+                                                                     title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                     labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                         conc_level = list(title = "Concentration level",
+                                                                           direction = "horizontal",
+                                                                           nrow = 1,
+                                                                           title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                           labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                       )
+                    )
+)
+
+name = "CYCLOSPORINA"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix)) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+heatmap4 <- Heatmap(matrix = matrix, 
+                    cluster_columns = F, 
+                    cluster_rows = F, 
+                    show_column_names = F,
+                    column_title = "Cyclosporin A",
+                    column_title_gp = gpar(fontsize = 15, fontface = 2),
+                    width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                    height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                    col = col_fun, 
+                    show_heatmap_legend = F,
+                    row_split = row_split, row_gap = unit(0.15, "cm"),
+                    top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                         filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |> 
+                                                         distinct(sample_id, time, conc_level) |> 
+                                                         arrange(time, conc_level) |> 
+                                                         mutate(time = factor(time, levels = c("8", "24"))) |> 
+                                                         column_to_rownames("sample_id"),
+                                                       col = list(time = topcolor$time,
+                                                                  conc_level = topcolor$conc_level),
+                                                       annotation_label = c("Time (h)", "Concentration level"),
+                                                       show_annotation_name = F,
+                                                       
+                                                       annotation_legend_param = list(
+                                                         time = list(title = "Time (h)",
+                                                                     direction = "horizontal",
+                                                                     nrow = 1,
+                                                                     title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                     labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                         conc_level = list(title = "Concentration level",
+                                                                           direction = "horizontal",
+                                                                           nrow = 1,
+                                                                           title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                           labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                       )
+                    )
+)
+
+name = "MITOMYCINC"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix)) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+heatmap5 <- Heatmap(matrix = matrix, cluster_columns = F, cluster_rows = F, show_column_names = F,
+                    column_title = "Mitomycin C",
+                    column_title_gp = gpar(fontsize = 15, fontface = 2),
+                    width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                    height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                    col = col_fun,
+                    show_heatmap_legend = F,
+                    row_split = row_split, row_gap = unit(0.15, "cm"),
+                    top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                         filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |>
+                                                         distinct(sample_id, time, conc_level) |>
+                                                         arrange(time, conc_level) |>
+                                                         mutate(time = factor(time, levels = c("8", "24"))) |>
+                                                         column_to_rownames("sample_id"),
+                                                       col = list(time = topcolor$time,
+                                                                  conc_level = topcolor$conc_level),
+                                                       annotation_label = c("Time (h)", "Concentration level"),
+                                                       show_annotation_name = F,
+                                                       
+                                                       annotation_legend_param = list(
+                                                         time = list(title = "Time (h)",
+                                                                     direction = "horizontal",
+                                                                     nrow = 1,
+                                                                     title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                     labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                         conc_level = list(title = "Concentration level",
+                                                                           direction = "horizontal",
+                                                                           nrow = 1,
+                                                                           title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                           labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                       )
+                    )
+)
+
+name = "OMEPRAZOL"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix)) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+heatmap6 <- Heatmap(matrix = matrix, cluster_columns = F, cluster_rows = F, show_column_names = F,
+                    column_title = "Omeprazole",
+                    column_title_gp = gpar(fontsize = 15, fontface = 2),
+                    width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                    height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                    col = col_fun,
+                    show_heatmap_legend = F,
+                    row_split = row_split, row_gap = unit(0.15, "cm"),
+                    top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                         filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |>
+                                                         distinct(sample_id, time, conc_level) |>
+                                                         arrange(time, conc_level) |>
+                                                         mutate(time = factor(time, levels = c("8", "24"))) |>
+                                                         column_to_rownames("sample_id"),
+                                                       col = list(time = topcolor$time,
+                                                                  conc_level = topcolor$conc_level),
+                                                       annotation_label = c("Time (h)", "Concentration level"),
+                                                       show_annotation_name = F,
+                                                       
+                                                       annotation_legend_param = list(
+                                                         time = list(title = "Time (h)",
+                                                                     direction = "horizontal",
+                                                                     nrow = 1,
+                                                                     title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                     labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                         conc_level = list(title = "Concentration level",
+                                                                           direction = "horizontal",
+                                                                           nrow = 1,
+                                                                           title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                           labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                       )
+                    )
+)
+
+name = "DICHLOROVINYLCYSTEINE"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix)) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+heatmap7 <- Heatmap(matrix = matrix, cluster_columns = F, cluster_rows = F, show_column_names = F,
+                    column_title = "DCVC",
+                    column_title_gp = gpar(fontsize = 15, fontface = 2),
+                    width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                    height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                    col = col_fun, 
+                    show_heatmap_legend = F,
+                    row_split = row_split, row_gap = unit(0.15, "cm"),
+                    
+                    top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                         filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |> 
+                                                         distinct(sample_id, time, conc_level) |> 
+                                                         arrange(time, conc_level) |> 
+                                                         mutate(time = factor(time, levels = c("8", "24"))) |> 
+                                                         column_to_rownames("sample_id"),
+                                                       col = list(time = topcolor$time,
+                                                                  conc_level = topcolor$conc_level),
+                                                       annotation_label = c("Time (h)", "Concentration level"),
+                                                       show_annotation_name = F,
+                                                       
+                                                       annotation_legend_param = list(
+                                                         time = list(title = "Time (h)",
+                                                                     direction = "horizontal",
+                                                                     nrow = 1,
+                                                                     title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                     labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                         conc_level = list(title = "Concentration level",
+                                                                           direction = "horizontal",
+                                                                           nrow = 1,
+                                                                           title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                           labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                       )
+                    )
+)
+
+# last one
+name = "CADMIUMDICHLORIDE"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix)) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+heatmap_last <- Heatmap(matrix = matrix, cluster_columns = F, cluster_rows = F, show_column_names = F,
+                        
+                        # row_title = "Module",
+                        row_title_side = "right",
+                        show_row_names = F,
+                        
+                        row_split = row_split, row_gap = unit(0.15, "cm"),
+                        
+                        column_title = "Cadmium\nChloride",
+                        column_title_gp = gpar(fontsize = 15, fontface = 2),
+                        width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                        height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                        col = col_fun, 
+                        show_heatmap_legend = T,
+                        heatmap_legend_param = list(title = "Eigengene", 
+                                                    direction = "horizontal",
+                                                    title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                    labels_gp = grid::gpar(fontsize = 12),
+                                                    legend_width = unit(6, "cm"),
+                                                    
+                                                    at = c(-10, -3:3,10),
+                                                    labels = c("-10", "-3", "-2", "-1", "0", "1", "2", "3", "10"),
+                                                    break_dist=1
+                                                    
+                                                    
+                                                    # lgd = Legend(col_fun = col_fun, at = c(-10,-3:3,10), break_dist = 1)
+                                                    
+                        ),
+                        top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                             filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |> 
+                                                             distinct(sample_id, time, conc_level) |> 
+                                                             arrange(time, conc_level) |> 
+                                                             mutate(time = factor(time, levels = c("8", "24"))) |> 
+                                                             column_to_rownames("sample_id"),
+                                                           col = list(time = topcolor$time,
+                                                                      conc_level = topcolor$conc_level),
+                                                           annotation_label = c("Time (h)", "Concentration level"),
+                                                           show_annotation_name = F,
+                                                           
+                                                           annotation_legend_param = list(
+                                                             time = list(title = "Time (h)",
+                                                                         direction = "horizontal",
+                                                                         nrow = 1,
+                                                                         title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                         labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                             conc_level = list(title = "Concentration level",
+                                                                               direction = "horizontal",
+                                                                               nrow = 1,
+                                                                               title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                               labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                           )
+                        )
+)
+
+
+le <- setNames(object = selected_modules$`KE Group`, nm = rownames(selected_modules))
+col_ke = set_names(x = c("#FFDE17", "#E674AD","#DD3226","#A23F97","#f58231", "#39C6F4","#3CB44B"), nm = sort(unique(selected_modules$KE)))
+heat_legend <- Heatmap(matrix = le,
+                       show_column_names = FALSE,
+                       row_title = "Module",
+                       row_title_side = "left", 
+                       row_split = row_split, row_gap = unit(0.15, "cm"),
+                       name = "KE group",
+                       width = HEIGHT_FACTOR*unit(1, "mm"),
+                       height = HEIGHT_FACTOR*unit(1, "mm"),
+                       cluster_rows = FALSE, 
+                       col = col_ke,
+                       heatmap_legend_param = list(title = "Stress Response Pathway",
+                                                   ncol = 4,
+                                                   direction = "horizontal",
+                                                   title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                   labels_gp = grid::gpar(fontsize = 12))
+)
+
+pdf(file = file.path(getwd(), "EG_RPTEC.pdf"),
+    width = 15,
+    height = 8)
+
+draw(object = heatmap1 + heatmap5 + heatmap3 + heatmap2 + heatmap7 + heatmap4 + heatmap6 + heatmap_last + heat_legend, 
+     merge_legend = TRUE, 
+     annotation_legend_side = "bottom",
+     heatmap_legend_side = "bottom")
+
+dev.off()
+graphics.off()
+```
+# RPTEC wDRW
+
+## Import
+
+```{r, import, include=TRUE, echo=TRUE}
+rptec <- list(eg_score = NULL)
+
+rptec$eg_score <- eg_scores_RPTEC
+
+
+sem <- drw_scores_RPTEC |> 
+  rename(sample_id = condition_id, module_number = module_nr, eg_score = drw_zscore)
+
+rptec$eg_score <- rptec$eg_score |> 
+  filter(module_number != 0) |>  rows_update(y = sem |> select(sample_id, module_number, eg_score), by = c("sample_id", "module_number"))
+
+```
+
+## Wrangle
+
+```{r, wrangle, include=TRUE, echo=TRUE}
+selected_modules <- bind_rows(
+  data.frame(KE = "Mitochondria", module = paste("hRPTECTERT1",sort(c(134,19,288,240)), sep = "_")),
+  data.frame(KE = "Endoplasmic Reticulum", module = paste("hRPTECTERT1",sort(c(40,33,235,162,109,211)), sep = "_")),
+  data.frame(KE = "Lysosome", module = paste("hRPTECTERT1",c(16), sep = "_")),
+  data.frame(KE = "Cell Cycle", module = paste("hRPTECTERT1",c(12, 263), sep = "_")),
+  data.frame(KE = "Inflammation", module = paste("hRPTECTERT1",sort(c(15, 44, 46, 254)), sep = "_")),
+  data.frame(KE = "Oxidative Stress", module = paste("hRPTECTERT1",c(50,56), sep = "_")),
+  data.frame(KE = "DNA Damage", module = paste("hRPTECTERT1",sort(c(260,35)), sep = "_"))) |> 
+  mutate(module = str_remove(module, "hRPTECTERT1_")) |> 
+  column_to_rownames("module") |> 
+  arrange(match(KE, c("Cell Cycle", "Inflammation", "DNA Damage", "Lysosome", "Oxidative Stress", "Endoplasmic Reticulum", "Mitochondria"))) |> 
+  rename(`KE Group` = "KE")
+
+data <- rptec$eg_score |> 
+  filter(module_number %in% rownames(selected_modules)) |> 
+  select(sample_id, module, eg_score) |> 
+  pivot_wider(names_from = "module", values_from = "eg_score") |> 
+  rename_with(~ str_remove(., "hRPTECTERT1_"),
+              .cols = where(is.numeric)) |> 
+  column_to_rownames(var = "sample_id") |> 
+  t() |> 
+  as.matrix()
+
+
+##### ADJUST COLOR HERE #####
+seq_vals <- c(-3, -2, -1, -0.5, 0, 0.5, 1, 2, 3)
+
+col_fun <- colorRamp2(
+  seq_vals,
+  colorspace::diverging_hcl(length(seq_vals), palette = "Blue-Red 3")
+)
+
+topcolor = list(
+  "time" = set_names(x = rev(colorspace::sequential_hcl(n = 2+1, palette = "Greens"))[-1], 
+                     nm = c("8", "24")),
+  "conc_level" = set_names(x = rev(colorspace::sequential_hcl(n = 3+1, palette = "Reds"))[-1],
+                           nm = c("1", "2", "3")))
+
+##### ADJUST HEATMAP CELL SIZE HERE ######
+size = 5
+WIDTH_FACTOR = size * 1.2
+HEIGHT_FACTOR = size * 1.2
+
+row_split <- setNames(object = selected_modules$`KE Group`, nm = rownames(selected_modules))
+row_split <- factor(row_split, levels = sort(unique(row_split)))
+
+name = "DOXORUBICIN"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix)) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+
+heatmap1 <- Heatmap(matrix = matrix, cluster_columns = F, cluster_rows = F, show_column_names = F,
+                    column_title = toTitleCase(tolower(name)),
+                    
+                    row_title = NULL,
+                    
+                    column_title_gp = gpar(fontsize = 15, fontface = 2),
+                    width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                    height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                    col = col_fun, 
+                    show_heatmap_legend = F,
+                    row_split = row_split, row_gap = unit(0.15, "cm"),
+                    top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                         filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |> 
+                                                         distinct(sample_id, time, conc_level) |> 
+                                                         arrange(time, conc_level) |> 
+                                                         mutate(time = factor(time, levels = c("8", "24"))) |> 
+                                                         column_to_rownames("sample_id"),
+                                                       col = list(time = topcolor$time,
+                                                                  conc_level = topcolor$conc_level),
+                                                       annotation_label = c("Time (h)", "Concentration level"),
+                                                       show_annotation_name = F,
+                                                       
+                                                       annotation_legend_param = list(
+                                                         time = list(title = "Time (h)",
+                                                                     direction = "horizontal",
+                                                                     nrow = 1,
+                                                                     title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                     labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                         conc_level = list(title = "Concentration level",
+                                                                           direction = "horizontal",
+                                                                           nrow = 1,
+                                                                           title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                           labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                       )
+                    )
+)
+
+name = "GENTAMYCIN"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix)) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+heatmap2 <- Heatmap(matrix = matrix, cluster_columns = F, cluster_rows = F, show_column_names = F,
+                    column_title = toTitleCase(tolower(name)),
+                    column_title_gp = gpar(fontsize = 15, fontface = 2),
+                    width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                    height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                    col = col_fun, 
+                    show_heatmap_legend = F,
+                    row_split = row_split, row_gap = unit(0.15, "cm"),
+                    top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                         filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |> 
+                                                         distinct(sample_id, time, conc_level) |> 
+                                                         arrange(time, conc_level) |> 
+                                                         mutate(time = factor(time, levels = c("8", "24"))) |> 
+                                                         column_to_rownames("sample_id"),
+                                                       col = list(time = topcolor$time,
+                                                                  conc_level = topcolor$conc_level),
+                                                       annotation_label = c("Time (h)", "Concentration level"),
+                                                       show_annotation_name = F,
+                                                       
+                                                       annotation_legend_param = list(
+                                                         time = list(title = "Time (h)",
+                                                                     direction = "horizontal",
+                                                                     nrow = 1,
+                                                                     title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                     labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                         conc_level = list(title = "Concentration level",
+                                                                           direction = "horizontal",
+                                                                           nrow = 1,
+                                                                           title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                           labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                       )
+                    )
+)
+
+name = "LEADACETATE"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix)) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+heatmap3 <- Heatmap(matrix = matrix, cluster_columns = F, cluster_rows = F, show_column_names = F,
+                    column_title = "Lead(II) acetate",
+                    column_title_gp = gpar(fontsize = 15, fontface = 2),
+                    width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                    height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                    col = col_fun,
+                    show_heatmap_legend = F,
+                    row_split = row_split, row_gap = unit(0.15, "cm"),
+                    top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                         filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |>
+                                                         distinct(sample_id, time, conc_level) |>
+                                                         arrange(time, conc_level) |>
+                                                         mutate(time = factor(time, levels = c("8", "24"))) |>
+                                                         column_to_rownames("sample_id"),
+                                                       col = list(time = topcolor$time,
+                                                                  conc_level = topcolor$conc_level),
+                                                       annotation_label = c("Time (h)", "Concentration level"),
+                                                       show_annotation_name = F,
+                                                       
+                                                       annotation_legend_param = list(
+                                                         time = list(title = "Time (h)",
+                                                                     direction = "horizontal",
+                                                                     nrow = 1,
+                                                                     title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                     labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                         conc_level = list(title = "Concentration level",
+                                                                           direction = "horizontal",
+                                                                           nrow = 1,
+                                                                           title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                           labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                       )
+                    )
+)
+
+name = "CYCLOSPORINA"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix)) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+heatmap4 <- Heatmap(matrix = matrix, 
+                    cluster_columns = F, 
+                    cluster_rows = F, 
+                    show_column_names = F,
+                    column_title = "Cyclosporin A",
+                    column_title_gp = gpar(fontsize = 15, fontface = 2),
+                    width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                    height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                    col = col_fun, 
+                    show_heatmap_legend = F,
+                    row_split = row_split, row_gap = unit(0.15, "cm"),
+                    top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                         filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |> 
+                                                         distinct(sample_id, time, conc_level) |> 
+                                                         arrange(time, conc_level) |> 
+                                                         mutate(time = factor(time, levels = c("8", "24"))) |> 
+                                                         column_to_rownames("sample_id"),
+                                                       col = list(time = topcolor$time,
+                                                                  conc_level = topcolor$conc_level),
+                                                       annotation_label = c("Time (h)", "Concentration level"),
+                                                       show_annotation_name = F,
+                                                       
+                                                       annotation_legend_param = list(
+                                                         time = list(title = "Time (h)",
+                                                                     direction = "horizontal",
+                                                                     nrow = 1,
+                                                                     title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                     labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                         conc_level = list(title = "Concentration level",
+                                                                           direction = "horizontal",
+                                                                           nrow = 1,
+                                                                           title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                           labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                       )
+                    )
+)
+
+name = "MITOMYCINC"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix)) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+heatmap5 <- Heatmap(matrix = matrix, cluster_columns = F, cluster_rows = F, show_column_names = F,
+                    column_title = "Mitomycin C",
+                    column_title_gp = gpar(fontsize = 15, fontface = 2),
+                    width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                    height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                    col = col_fun,
+                    show_heatmap_legend = F,
+                    row_split = row_split, row_gap = unit(0.15, "cm"),
+                    top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                         filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |>
+                                                         distinct(sample_id, time, conc_level) |>
+                                                         arrange(time, conc_level) |>
+                                                         mutate(time = factor(time, levels = c("8", "24"))) |>
+                                                         column_to_rownames("sample_id"),
+                                                       col = list(time = topcolor$time,
+                                                                  conc_level = topcolor$conc_level),
+                                                       annotation_label = c("Time (h)", "Concentration level"),
+                                                       show_annotation_name = F,
+                                                       
+                                                       annotation_legend_param = list(
+                                                         time = list(title = "Time (h)",
+                                                                     direction = "horizontal",
+                                                                     nrow = 1,
+                                                                     title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                     labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                         conc_level = list(title = "Concentration level",
+                                                                           direction = "horizontal",
+                                                                           nrow = 1,
+                                                                           title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                           labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                       )
+                    )
+)
+
+name = "OMEPRAZOL"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix)) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+heatmap6 <- Heatmap(matrix = matrix, cluster_columns = F, cluster_rows = F, show_column_names = F,
+                    column_title = "Omeprazole",
+                    column_title_gp = gpar(fontsize = 15, fontface = 2),
+                    width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                    height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                    col = col_fun,
+                    show_heatmap_legend = F,
+                    row_split = row_split, row_gap = unit(0.15, "cm"),
+                    top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                         filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |>
+                                                         distinct(sample_id, time, conc_level) |>
+                                                         arrange(time, conc_level) |>
+                                                         mutate(time = factor(time, levels = c("8", "24"))) |>
+                                                         column_to_rownames("sample_id"),
+                                                       col = list(time = topcolor$time,
+                                                                  conc_level = topcolor$conc_level),
+                                                       annotation_label = c("Time (h)", "Concentration level"),
+                                                       show_annotation_name = F,
+                                                       
+                                                       annotation_legend_param = list(
+                                                         time = list(title = "Time (h)",
+                                                                     direction = "horizontal",
+                                                                     nrow = 1,
+                                                                     title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                     labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                         conc_level = list(title = "Concentration level",
+                                                                           direction = "horizontal",
+                                                                           nrow = 1,
+                                                                           title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                           labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                       )
+                    )
+)
+
+name = "DICHLOROVINYLCYSTEINE"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix)) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+heatmap7 <- Heatmap(matrix = matrix, cluster_columns = F, cluster_rows = F, show_column_names = F,
+                    column_title = "DCVC",
+                    column_title_gp = gpar(fontsize = 15, fontface = 2),
+                    width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                    height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                    col = col_fun, 
+                    show_heatmap_legend = F,
+                    row_split = row_split, row_gap = unit(0.15, "cm"),
+                    
+                    top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                         filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |> 
+                                                         distinct(sample_id, time, conc_level) |> 
+                                                         arrange(time, conc_level) |> 
+                                                         mutate(time = factor(time, levels = c("8", "24"))) |> 
+                                                         column_to_rownames("sample_id"),
+                                                       col = list(time = topcolor$time,
+                                                                  conc_level = topcolor$conc_level),
+                                                       annotation_label = c("Time (h)", "Concentration level"),
+                                                       show_annotation_name = F,
+                                                       
+                                                       annotation_legend_param = list(
+                                                         time = list(title = "Time (h)",
+                                                                     direction = "horizontal",
+                                                                     nrow = 1,
+                                                                     title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                     labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                         conc_level = list(title = "Concentration level",
+                                                                           direction = "horizontal",
+                                                                           nrow = 1,
+                                                                           title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                           labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                       )
+                    )
+)
+
+# last one
+name = "CADMIUMDICHLORIDE"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix)) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+heatmap_last <- Heatmap(matrix = matrix, cluster_columns = F, cluster_rows = F, show_column_names = F,
+                        
+                        # row_title = "Module",
+                        row_title_side = "right",
+                        show_row_names = F,
+                        
+                        row_split = row_split, row_gap = unit(0.15, "cm"),
+                        
+                        column_title = "Cadmium\nChloride",
+                        column_title_gp = gpar(fontsize = 15, fontface = 2),
+                        width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                        height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                        col = col_fun, 
+                        show_heatmap_legend = T,
+                        heatmap_legend_param = list(title = "wDRW", 
+                                                    direction = "horizontal",
+                                                    title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                    labels_gp = grid::gpar(fontsize = 12),
+                                                    legend_width = unit(6, "cm"),
+                                                    
+                                                   at = c(-3, -2, -1, -0.5, 0, 0.5, 1, 2, 3),
+                                                    labels = c("-3", "-2", "-1", "-0.5", "0", "0.5", "1", "2", "3"),
+                                                    break_dist=1
+                                                    
+                                                    
+                                                    # lgd = Legend(col_fun = col_fun, at = c(-10,-3:3,10), break_dist = 1)
+                                                    
+                        ),
+                        top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                             filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |> 
+                                                             distinct(sample_id, time, conc_level) |> 
+                                                             arrange(time, conc_level) |> 
+                                                             mutate(time = factor(time, levels = c("8", "24"))) |> 
+                                                             column_to_rownames("sample_id"),
+                                                           col = list(time = topcolor$time,
+                                                                      conc_level = topcolor$conc_level),
+                                                           annotation_label = c("Time (h)", "Concentration level"),
+                                                           show_annotation_name = F,
+                                                           
+                                                           annotation_legend_param = list(
+                                                             time = list(title = "Time (h)",
+                                                                         direction = "horizontal",
+                                                                         nrow = 1,
+                                                                         title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                         labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                             conc_level = list(title = "Concentration level",
+                                                                               direction = "horizontal",
+                                                                               nrow = 1,
+                                                                               title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                               labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                           )
+                        )
+)
+
+
+le <- setNames(object = selected_modules$`KE Group`, nm = rownames(selected_modules))
+col_ke = set_names(x = c("#FFDE17", "#E674AD","#DD3226","#A23F97","#f58231", "#39C6F4","#3CB44B"), nm = sort(unique(selected_modules$KE)))
+heat_legend <- Heatmap(matrix = le,
+                       show_column_names = FALSE,
+                       row_title = "Module",
+                       row_title_side = "left", 
+                       row_split = row_split, row_gap = unit(0.15, "cm"),
+                       name = "KE group",
+                       width = HEIGHT_FACTOR*unit(1, "mm"),
+                       height = HEIGHT_FACTOR*unit(1, "mm"),
+                       cluster_rows = FALSE, 
+                       col = col_ke,
+                       heatmap_legend_param = list(title = "Stress Response Pathway",
+                                                   ncol = 4,
+                                                   direction = "horizontal",
+                                                   title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                   labels_gp = grid::gpar(fontsize = 12))
+)
+
+pdf(file = file.path(getwd(), "wDRW_RPTEC.pdf"),
+    width = 15,
+    height = 8)
+
+draw(object = heatmap1 + heatmap5 + heatmap3 + heatmap2 + heatmap7 + heatmap4 + heatmap6 + heatmap_last + heat_legend, 
+     merge_legend = TRUE, 
+     annotation_legend_side = "bottom",
+     heatmap_legend_side = "bottom")
+
+dev.off()
+graphics.off()
+```
+
+
+# PHH Eigengene
+
+## Import
+
+
+```{r}
+rptec <- list(eg_score = NULL)
+
+rptec$eg_score <- eg_scores_PHH
+
+sem <- eg_scores_PHH |> 
+  rename(sample_id = sample_id, module_number = module_number, eg_score = eg_score)
+
+rptec$eg_score <- rptec$eg_score |> 
+  filter(module_number != 0) |>  rows_update(y = sem |> select(sample_id, module_number, eg_score), by = c("sample_id", "module_number"))
+```
+
+
+## Wrangle
+
+```{r, wrangle, include=TRUE, echo=TRUE}
+selected_modules <- bind_rows(
+  data.frame(KE = "Mitochondria", module = paste("hPHH",sort(c(113,138,2,256,33,97)), sep = "_")),
+  data.frame(KE = "Endoplasmic Reticulum", module = paste("hPHH",sort(c(13,15,295,62)), sep = "_")),
+  data.frame(KE = "Lysosome", module = paste("hPHH",c(131,17,177,76,82,95), sep = "_")),
+  data.frame(KE = "Immune Response", module = paste("hPHH",sort(c(12,136,22,247,26)), sep = "_")),
+  data.frame(KE = "Oxidative Stress", module = paste("hPHH",c(144,325,337), sep = "_")),
+  data.frame(KE = "DNA Damage", module = paste("hPHH",sort(c(243,59,83)), sep = "_"))) |> 
+  mutate(module = str_remove(module, "hPHH_")) |> 
+  column_to_rownames("module") |> 
+  arrange(match(KE, c("Immune Response", "DNA Damage", "Lysosome", "Oxidative Stress", "Endoplasmic Reticulum", "Mitochondria"))) |> 
+  rename(`KE Group` = "KE")
+
+data <- rptec$eg_score |> 
+  filter(module_number %in% rownames(selected_modules)) |> 
+  select(sample_id, module, eg_score) |> 
+  pivot_wider(names_from = "module", values_from = "eg_score") |> 
+  rename_with(~ str_remove(., "hPHH_"),
+              .cols = where(is.numeric)) |> 
+  column_to_rownames(var = "sample_id") |> 
+  t() |> 
+  as.matrix()
+
+
+##### ADJUST COLOR HERE #####
+seq_vals <- c(-10, -3, -2, -1, 0, 1, 2, 3, 10)
+
+col_fun <- colorRamp2(
+  seq_vals,
+  colorspace::diverging_hcl(length(seq_vals), palette = "Blue-Red 3")
+)
+
+topcolor = list(
+  "time" = set_names(x = rev(colorspace::sequential_hcl(n = 2+1, palette = "Greens"))[-1], 
+                     nm = c("8", "24")),
+  "conc_level" = set_names(x = rev(colorspace::sequential_hcl(n = 3+1, palette = "Reds"))[-1],
+                           nm = c("1", "2", "3")))
+
+##### ADJUST HEATMAP CELL SIZE HERE ######
+size = 4
+WIDTH_FACTOR = size * 1.2
+HEIGHT_FACTOR = size * 1.2
+
+row_split <- setNames(object = selected_modules$`KE Group`, nm = rownames(selected_modules))
+row_split <- factor(row_split, levels = sort(unique(row_split)))
+
+name = "DOXORUBICIN"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix)) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+
+heatmap1 <- Heatmap(matrix = matrix, cluster_columns = F, cluster_rows = F, show_column_names = F,
+                    column_title = toTitleCase(tolower(name)),
+                    
+                    row_title = NULL,
+                    
+                    column_title_gp = gpar(fontsize = 12, fontface = 2),
+                    width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                    height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                    col = col_fun, 
+                    show_heatmap_legend = F,
+                    row_split = row_split, row_gap = unit(0.15, "cm"),
+                    top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                         filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |> 
+                                                         distinct(sample_id, time, conc_level) |> 
+                                                         arrange(time, conc_level) |> 
+                                                         mutate(time = factor(time, levels = c("8", "24"))) |> 
+                                                         column_to_rownames("sample_id"),
+                                                       col = list(time = topcolor$time,
+                                                                  conc_level = topcolor$conc_level),
+                                                       annotation_label = c("Time (h)", "Concentration level"),
+                                                       show_annotation_name = F,
+                                                       
+                                                       annotation_legend_param = list(
+                                                         time = list(title = "Time (h)",
+                                                                     direction = "horizontal",
+                                                                     nrow = 1,
+                                                                     title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                     labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                         conc_level = list(title = "Concentration level",
+                                                                           direction = "horizontal",
+                                                                           nrow = 1,
+                                                                           title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                           labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                       )
+                    )
+)
+
+name = "TUNICAMYCIN"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix)) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+heatmap2 <- Heatmap(matrix = matrix, cluster_columns = F, cluster_rows = F, show_column_names = F,
+                    column_title = toTitleCase(tolower(name)),
+                    column_title_gp = gpar(fontsize = 12, fontface = 2),
+                    width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                    height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                    col = col_fun, 
+                    show_heatmap_legend = F,
+                    row_split = row_split, row_gap = unit(0.15, "cm"),
+                    top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                         filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |> 
+                                                         distinct(sample_id, time, conc_level) |> 
+                                                         arrange(time, conc_level) |> 
+                                                         mutate(time = factor(time, levels = c("8", "24"))) |> 
+                                                         column_to_rownames("sample_id"),
+                                                       col = list(time = topcolor$time,
+                                                                  conc_level = topcolor$conc_level),
+                                                       annotation_label = c("Time (h)", "Concentration level"),
+                                                       show_annotation_name = F,
+                                                       
+                                                       annotation_legend_param = list(
+                                                         time = list(title = "Time (h)",
+                                                                     direction = "horizontal",
+                                                                     nrow = 1,
+                                                                     title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                     labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                         conc_level = list(title = "Concentration level",
+                                                                           direction = "horizontal",
+                                                                           nrow = 1,
+                                                                           title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                           labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                       )
+                    )
+)
+
+name = "ALLYLALCOHOL"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix), time %in% c("8", "24")) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+heatmap3 <- Heatmap(matrix = matrix, cluster_columns = F, cluster_rows = F, show_column_names = F,
+                    column_title = "Allyl\nAlcohol",
+                    column_title_gp = gpar(fontsize = 12, fontface = 2),
+                    width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                    height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                    col = col_fun,
+                    show_heatmap_legend = F,
+                    row_split = row_split, row_gap = unit(0.15, "cm"),
+                    top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                         filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |>
+                                                         distinct(sample_id, time, conc_level) |>
+                                                         arrange(time, conc_level) |>
+                                                         mutate(time = factor(time, levels = c("8", "24"))) |>
+                                                         column_to_rownames("sample_id"),
+                                                       col = list(time = topcolor$time,
+                                                                  conc_level = topcolor$conc_level),
+                                                       annotation_label = c("Time (h)", "Concentration level"),
+                                                       show_annotation_name = F,
+                                                       
+                                                       annotation_legend_param = list(
+                                                         time = list(title = "Time (h)",
+                                                                     direction = "horizontal",
+                                                                     nrow = 1,
+                                                                     title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                     labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                         conc_level = list(title = "Concentration level",
+                                                                           direction = "horizontal",
+                                                                           nrow = 1,
+                                                                           title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                           labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                       )
+                    )
+)
+
+name = "CYCLOSPORINEA"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix)) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+heatmap4 <- Heatmap(matrix = matrix, 
+                    cluster_columns = F, 
+                    cluster_rows = F, 
+                    show_column_names = F,
+                    column_title = "Cyclosporin A",
+                    column_title_gp = gpar(fontsize = 12, fontface = 2),
+                    width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                    height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                    col = col_fun, 
+                    show_heatmap_legend = F,
+                    row_split = row_split, row_gap = unit(0.15, "cm"),
+                    top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                         filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |> 
+                                                         distinct(sample_id, time, conc_level) |> 
+                                                         arrange(time, conc_level) |> 
+                                                         mutate(time = factor(time, levels = c("8", "24"))) |> 
+                                                         column_to_rownames("sample_id"),
+                                                       col = list(time = topcolor$time,
+                                                                  conc_level = topcolor$conc_level),
+                                                       annotation_label = c("Time (h)", "Concentration level"),
+                                                       show_annotation_name = F,
+                                                       
+                                                       annotation_legend_param = list(
+                                                         time = list(title = "Time (h)",
+                                                                     direction = "horizontal",
+                                                                     nrow = 1,
+                                                                     title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                     labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                         conc_level = list(title = "Concentration level",
+                                                                           direction = "horizontal",
+                                                                           nrow = 1,
+                                                                           title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                           labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                       )
+                    )
+)
+
+name = "FLUOXETINEHYDROCHLORIDE"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix)) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+heatmap5 <- Heatmap(matrix = matrix, cluster_columns = F, cluster_rows = F, show_column_names = F,
+                    column_title = "Fluoxetine",
+                    column_title_gp = gpar(fontsize = 12, fontface = 2),
+                    width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                    height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                    col = col_fun,
+                    show_heatmap_legend = F,
+                    row_split = row_split, row_gap = unit(0.15, "cm"),
+                    top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                         filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |>
+                                                         distinct(sample_id, time, conc_level) |>
+                                                         arrange(time, conc_level) |>
+                                                         mutate(time = factor(time, levels = c("8", "24"))) |>
+                                                         column_to_rownames("sample_id"),
+                                                       col = list(time = topcolor$time,
+                                                                  conc_level = topcolor$conc_level),
+                                                       annotation_label = c("Time (h)", "Concentration level"),
+                                                       show_annotation_name = F,
+
+                                                       annotation_legend_param = list(
+                                                         time = list(title = "Time (h)",
+                                                                     direction = "horizontal",
+                                                                     nrow = 1,
+                                                                     title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                     labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                         conc_level = list(title = "Concentration level",
+                                                                           direction = "horizontal",
+                                                                           nrow = 1,
+                                                                           title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                           labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                       )
+                    )
+)
+
+name = "INTERFERONALPHAHUMAN"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix), time %in% c("8", "24")) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+heatmap6 <- Heatmap(matrix = matrix, cluster_columns = F, cluster_rows = F, show_column_names = F,
+                    column_title = "IFN-\u03B1",
+                    column_title_gp = gpar(fontsize = 12, fontface = 2),
+                    width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                    height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                    col = col_fun,
+                    show_heatmap_legend = F,
+                    row_split = row_split, row_gap = unit(0.15, "cm"),
+                    top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                         filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |>
+                                                         distinct(sample_id, time, conc_level) |>
+                                                         arrange(time, conc_level) |>
+                                                         mutate(time = factor(time, levels = c("8", "24"))) |>
+                                                         column_to_rownames("sample_id"),
+                                                       col = list(time = topcolor$time,
+                                                                  conc_level = topcolor$conc_level),
+                                                       annotation_label = c("Time (h)", "Concentration level"),
+                                                       show_annotation_name = F,
+                                                       
+                                                       annotation_legend_param = list(
+                                                         time = list(title = "Time (h)",
+                                                                     direction = "horizontal",
+                                                                     nrow = 1,
+                                                                     title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                     labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                         conc_level = list(title = "Concentration level",
+                                                                           direction = "horizontal",
+                                                                           nrow = 1,
+                                                                           title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                           labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                       )
+                    )
+)
+
+name = "TNFALPHARAT"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix)) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+heatmap7 <- Heatmap(matrix = matrix, cluster_columns = F, cluster_rows = F, show_column_names = F,
+                    column_title = "TNF-\u03B1",
+                    column_title_gp = gpar(fontsize = 12, fontface = 2, fontfamily="URWTimes"),
+                    width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                    height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                    col = col_fun, 
+                    show_heatmap_legend = F,
+                    row_split = row_split, row_gap = unit(0.15, "cm"),
+                    
+                    top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                         filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |> 
+                                                         distinct(sample_id, time, conc_level) |> 
+                                                         arrange(time, conc_level) |> 
+                                                         mutate(time = factor(time, levels = c("8", "24"))) |> 
+                                                         column_to_rownames("sample_id"),
+                                                       col = list(time = topcolor$time,
+                                                                  conc_level = topcolor$conc_level),
+                                                       annotation_label = c("Time (h)", "Concentration level"),
+                                                       show_annotation_name = F,
+                                                       
+                                                       annotation_legend_param = list(
+                                                         time = list(title = "Time (h)",
+                                                                     direction = "horizontal",
+                                                                     nrow = 1,
+                                                                     title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                     labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                         conc_level = list(title = "Concentration level",
+                                                                           direction = "horizontal",
+                                                                           nrow = 1,
+                                                                           title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                           labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                       )
+                    )
+)
+
+name = "AFLATOXINB1"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix)) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+heatmap8 <- Heatmap(matrix = matrix, cluster_columns = F, cluster_rows = F, show_column_names = F,
+                    column_title = "Aflatoxin B1",
+                    column_title_gp = gpar(fontsize = 12, fontface = 2),
+                    width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                    height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                    col = col_fun, 
+                    show_heatmap_legend = F,
+                    row_split = row_split, row_gap = unit(0.15, "cm"),
+                    
+                    top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                         filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |> 
+                                                         distinct(sample_id, time, conc_level) |> 
+                                                         arrange(time, conc_level) |> 
+                                                         mutate(time = factor(time, levels = c("8", "24"))) |> 
+                                                         column_to_rownames("sample_id"),
+                                                       col = list(time = topcolor$time,
+                                                                  conc_level = topcolor$conc_level),
+                                                       annotation_label = c("Time (h)", "Concentration level"),
+                                                       show_annotation_name = F,
+                                                       
+                                                       annotation_legend_param = list(
+                                                         time = list(title = "Time (h)",
+                                                                     direction = "horizontal",
+                                                                     nrow = 1,
+                                                                     title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                     labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                         conc_level = list(title = "Concentration level",
+                                                                           direction = "horizontal",
+                                                                           nrow = 1,
+                                                                           title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                           labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                       )
+                    )
+)
+
+name = "ACETAMINOPHEN"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix), time %in% c("8", "24")) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+heatmap9 <- Heatmap(matrix = matrix, cluster_columns = F, cluster_rows = F, show_column_names = F,
+                    column_title = "Acetaminophen",
+                    column_title_gp = gpar(fontsize = 12, fontface = 2),
+                    width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                    height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                    col = col_fun, 
+                    show_heatmap_legend = F,
+                    row_split = row_split, row_gap = unit(0.15, "cm"),
+                    
+                    top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                         filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |> 
+                                                         distinct(sample_id, time, conc_level) |> 
+                                                         arrange(time, conc_level) |> 
+                                                         mutate(time = factor(time, levels = c("8", "24"))) |> 
+                                                         column_to_rownames("sample_id"),
+                                                       col = list(time = topcolor$time,
+                                                                  conc_level = topcolor$conc_level),
+                                                       annotation_label = c("Time (h)", "Concentration level"),
+                                                       show_annotation_name = F,
+                                                       
+                                                       annotation_legend_param = list(
+                                                         time = list(title = "Time (h)",
+                                                                     direction = "horizontal",
+                                                                     nrow = 1,
+                                                                     title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                     labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                         conc_level = list(title = "Concentration level",
+                                                                           direction = "horizontal",
+                                                                           nrow = 1,
+                                                                           title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                           labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                       )
+                    )
+)
+
+name = "DIETHYLMALEATE"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix), time %in% c("8", "24")) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+heatmap10 <- Heatmap(matrix = matrix, cluster_columns = F, cluster_rows = F, show_column_names = F,
+                    column_title = "Diethyl\nMaleate",
+                    column_title_gp = gpar(fontsize = 12, fontface = 2),
+                    width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                    height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                    col = col_fun, 
+                    show_heatmap_legend = F,
+                    row_split = row_split, row_gap = unit(0.15, "cm"),
+                    
+                    top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                         filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |> 
+                                                         distinct(sample_id, time, conc_level) |> 
+                                                         arrange(time, conc_level) |> 
+                                                         mutate(time = factor(time, levels = c("8", "24"))) |> 
+                                                         column_to_rownames("sample_id"),
+                                                       col = list(time = topcolor$time,
+                                                                  conc_level = topcolor$conc_level),
+                                                       annotation_label = c("Time (h)", "Concentration level"),
+                                                       show_annotation_name = F,
+                                                       
+                                                       annotation_legend_param = list(
+                                                         time = list(title = "Time (h)",
+                                                                     direction = "horizontal",
+                                                                     nrow = 1,
+                                                                     title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                     labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                         conc_level = list(title = "Concentration level",
+                                                                           direction = "horizontal",
+                                                                           nrow = 1,
+                                                                           title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                           labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                       )
+                    )
+)
+
+# last one
+name = "ETHIONINE"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix), time %in% c("8", "24")) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+heatmap_last <- Heatmap(matrix = matrix, cluster_columns = F, cluster_rows = F, show_column_names = F,
+                        
+                        # row_title = "Module",
+                        row_title_side = "right",
+                        show_row_names = F,
+                        
+                        row_split = row_split, row_gap = unit(0.15, "cm"),
+                        
+                        column_title = "Ethionine",
+                        column_title_gp = gpar(fontsize = 12, fontface = 2),
+                        width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                        height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                        col = col_fun, 
+                        show_heatmap_legend = T,
+                        heatmap_legend_param = list(title = "Eigengene", 
+                                                    direction = "horizontal",
+                                                    title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                    labels_gp = grid::gpar(fontsize = 12),
+                                                    legend_width = unit(6, "cm"),
+                                                    
+                                                    at = c(-10, -3:3,10),
+                                                    labels = c("-10", "-3", "-2", "-1", "0", "1", "2", "3", "10"),
+                                                    break_dist=1
+                                                    
+                                                    
+                                                    # lgd = Legend(col_fun = col_fun, at = c(-10,-3:3,10), break_dist = 1)
+                                                    
+                        ),
+                        top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                             filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |> 
+                                                             distinct(sample_id, time, conc_level) |> 
+                                                             arrange(time, conc_level) |> 
+                                                             mutate(time = factor(time, levels = c("8", "24"))) |> 
+                                                             column_to_rownames("sample_id"),
+                                                           col = list(time = topcolor$time,
+                                                                      conc_level = topcolor$conc_level),
+                                                           annotation_label = c("Time (h)", "Concentration level"),
+                                                           show_annotation_name = F,
+                                                           
+                                                           annotation_legend_param = list(
+                                                             time = list(title = "Time (h)",
+                                                                         direction = "horizontal",
+                                                                         nrow = 1,
+                                                                         title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                         labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                             conc_level = list(title = "Concentration level",
+                                                                               direction = "horizontal",
+                                                                               nrow = 1,
+                                                                               title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                               labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                           )
+                        )
+)
+
+le <- setNames(object = selected_modules$`KE Group`, nm = rownames(selected_modules))
+col_ke = set_names(x = c("#E674AD","#DD3226","#A0522D","#f58231", "#39C6F4","#3CB44B"), nm = sort(unique(selected_modules$KE)))
+heat_legend <- Heatmap(matrix = le,
+                       show_column_names = FALSE,
+                       row_title = "Module",
+                       row_title_side = "left", 
+                       row_split = row_split, row_gap = unit(0.15, "cm"),
+                       name = "KE group",
+                       width = HEIGHT_FACTOR*unit(1, "mm"),
+                       height = HEIGHT_FACTOR*unit(1, "mm"),
+                       cluster_rows = FALSE, 
+                       col = col_ke,
+                       heatmap_legend_param = list(title = "Stress Response Pathway",
+                                                   ncol = 4,
+                                                   direction = "horizontal",
+                                                   title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                   labels_gp = grid::gpar(fontsize = 12))
+)
+
+CairoPDF("EG_PHH.pdf", width = 20, height = 8, family = "URWTimes")
+
+draw(object = heatmap1 + heatmap5 + heatmap3 + heatmap2 + heatmap4 + heatmap6 + heatmap7 + heatmap8 +heatmap9 + heatmap10 + heatmap_last + heat_legend, 
+     merge_legend = TRUE, 
+     annotation_legend_side = "bottom",
+     heatmap_legend_side = "bottom",
+     column_title_gp = gpar(fontsize = 8))
+
+dev.off()
+graphics.off()
+```
+
+# PHH wDRW
+
+## Import
+
+```{r, import, include=TRUE, echo=TRUE}
+rptec <- list(eg_score = NULL)
+
+rptec$eg_score <- drw_scores_PHH
+
+
+sem <- drw_scores_PHH |> 
+  rename(sample_id = condition_id, module_number = module_nr, eg_score = drw_zscore)
+
+rptec$eg_score <- rptec$eg_score |> 
+  filter(module_number != 0) |>  rows_update(y = sem |> select(sample_id, module_number, eg_score), by = c("sample_id", "module_number"))
+```
+
+# Wrangle
+
+```{r, wrangle, include=TRUE, echo=TRUE}
+selected_modules <- bind_rows(
+  data.frame(KE = "Mitochondria", module = paste("hPHH",sort(c(113,138,2,256,33,97)), sep = "_")),
+  data.frame(KE = "Endoplasmic Reticulum", module = paste("hPHH",sort(c(13,15,295,62)), sep = "_")),
+  data.frame(KE = "Lysosome", module = paste("hPHH",c(131,17,177,76,82,95), sep = "_")),
+  data.frame(KE = "Immune Response", module = paste("hPHH",sort(c(12,136,22,247,26)), sep = "_")),
+  data.frame(KE = "Oxidative Stress", module = paste("hPHH",c(144,325,337), sep = "_")),
+  data.frame(KE = "DNA Damage", module = paste("hPHH",sort(c(243,59,83)), sep = "_"))) |> 
+  mutate(module = str_remove(module, "hPHH_")) |> 
+  column_to_rownames("module") |> 
+  arrange(match(KE, c("Immune Response", "DNA Damage", "Lysosome", "Oxidative Stress", "Endoplasmic Reticulum", "Mitochondria"))) |> 
+  rename(`KE Group` = "KE")
+
+data <- rptec$eg_score |> 
+  filter(module_number %in% rownames(selected_modules)) |> 
+  select(sample_id, module, eg_score) |> 
+  pivot_wider(names_from = "module", values_from = "eg_score") |> 
+  rename_with(~ str_remove(., "hPHH_"),
+              .cols = where(is.numeric)) |> 
+  column_to_rownames(var = "sample_id") |> 
+  t() |> 
+  as.matrix()
+
+
+##### ADJUST COLOR HERE #####
+seq_vals <- c(-3, -2, -1, -0.5, 0, 0.5, 1, 2, 3)
+
+col_fun <- colorRamp2(
+  seq_vals,
+  colorspace::diverging_hcl(length(seq_vals), palette = "Blue-Red 3")
+)
+
+topcolor = list(
+  "time" = set_names(x = rev(colorspace::sequential_hcl(n = 2+1, palette = "Greens"))[-1], 
+                     nm = c("8", "24")),
+  "conc_level" = set_names(x = rev(colorspace::sequential_hcl(n = 3+1, palette = "Reds"))[-1],
+                           nm = c("1", "2", "3")))
+
+##### ADJUST HEATMAP CELL SIZE HERE ######
+size = 4
+WIDTH_FACTOR = size * 1.2
+HEIGHT_FACTOR = size * 1.2
+
+row_split <- setNames(object = selected_modules$`KE Group`, nm = rownames(selected_modules))
+row_split <- factor(row_split, levels = sort(unique(row_split)))
+
+name = "DOXORUBICIN"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix)) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+
+heatmap1 <- Heatmap(matrix = matrix, cluster_columns = F, cluster_rows = F, show_column_names = F,
+                    column_title = toTitleCase(tolower(name)),
+                    
+                    row_title = NULL,
+                    
+                    column_title_gp = gpar(fontsize = 12, fontface = 2),
+                    width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                    height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                    col = col_fun, 
+                    show_heatmap_legend = F,
+                    row_split = row_split, row_gap = unit(0.15, "cm"),
+                    top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                         filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |> 
+                                                         distinct(sample_id, time, conc_level) |> 
+                                                         arrange(time, conc_level) |> 
+                                                         mutate(time = factor(time, levels = c("8", "24"))) |> 
+                                                         column_to_rownames("sample_id"),
+                                                       col = list(time = topcolor$time,
+                                                                  conc_level = topcolor$conc_level),
+                                                       annotation_label = c("Time (h)", "Concentration level"),
+                                                       show_annotation_name = F,
+                                                       
+                                                       annotation_legend_param = list(
+                                                         time = list(title = "Time (h)",
+                                                                     direction = "horizontal",
+                                                                     nrow = 1,
+                                                                     title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                     labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                         conc_level = list(title = "Concentration level",
+                                                                           direction = "horizontal",
+                                                                           nrow = 1,
+                                                                           title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                           labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                       )
+                    )
+)
+
+name = "TUNICAMYCIN"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix)) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+heatmap2 <- Heatmap(matrix = matrix, cluster_columns = F, cluster_rows = F, show_column_names = F,
+                    column_title = toTitleCase(tolower(name)),
+                    column_title_gp = gpar(fontsize = 12, fontface = 2),
+                    width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                    height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                    col = col_fun, 
+                    show_heatmap_legend = F,
+                    row_split = row_split, row_gap = unit(0.15, "cm"),
+                    top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                         filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |> 
+                                                         distinct(sample_id, time, conc_level) |> 
+                                                         arrange(time, conc_level) |> 
+                                                         mutate(time = factor(time, levels = c("8", "24"))) |> 
+                                                         column_to_rownames("sample_id"),
+                                                       col = list(time = topcolor$time,
+                                                                  conc_level = topcolor$conc_level),
+                                                       annotation_label = c("Time (h)", "Concentration level"),
+                                                       show_annotation_name = F,
+                                                       
+                                                       annotation_legend_param = list(
+                                                         time = list(title = "Time (h)",
+                                                                     direction = "horizontal",
+                                                                     nrow = 1,
+                                                                     title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                     labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                         conc_level = list(title = "Concentration level",
+                                                                           direction = "horizontal",
+                                                                           nrow = 1,
+                                                                           title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                           labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                       )
+                    )
+)
+
+name = "ALLYLALCOHOL"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix), time %in% c("8", "24")) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+heatmap3 <- Heatmap(matrix = matrix, cluster_columns = F, cluster_rows = F, show_column_names = F,
+                    column_title = "Allyl\nAlcohol",
+                    column_title_gp = gpar(fontsize = 12, fontface = 2),
+                    width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                    height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                    col = col_fun,
+                    show_heatmap_legend = F,
+                    row_split = row_split, row_gap = unit(0.15, "cm"),
+                    top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                         filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |>
+                                                         distinct(sample_id, time, conc_level) |>
+                                                         arrange(time, conc_level) |>
+                                                         mutate(time = factor(time, levels = c("8", "24"))) |>
+                                                         column_to_rownames("sample_id"),
+                                                       col = list(time = topcolor$time,
+                                                                  conc_level = topcolor$conc_level),
+                                                       annotation_label = c("Time (h)", "Concentration level"),
+                                                       show_annotation_name = F,
+                                                       
+                                                       annotation_legend_param = list(
+                                                         time = list(title = "Time (h)",
+                                                                     direction = "horizontal",
+                                                                     nrow = 1,
+                                                                     title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                     labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                         conc_level = list(title = "Concentration level",
+                                                                           direction = "horizontal",
+                                                                           nrow = 1,
+                                                                           title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                           labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                       )
+                    )
+)
+
+name = "CYCLOSPORINEA"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix)) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+heatmap4 <- Heatmap(matrix = matrix, 
+                    cluster_columns = F, 
+                    cluster_rows = F, 
+                    show_column_names = F,
+                    column_title = "Cyclosporin A",
+                    column_title_gp = gpar(fontsize = 12, fontface = 2),
+                    width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                    height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                    col = col_fun, 
+                    show_heatmap_legend = F,
+                    row_split = row_split, row_gap = unit(0.15, "cm"),
+                    top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                         filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |> 
+                                                         distinct(sample_id, time, conc_level) |> 
+                                                         arrange(time, conc_level) |> 
+                                                         mutate(time = factor(time, levels = c("8", "24"))) |> 
+                                                         column_to_rownames("sample_id"),
+                                                       col = list(time = topcolor$time,
+                                                                  conc_level = topcolor$conc_level),
+                                                       annotation_label = c("Time (h)", "Concentration level"),
+                                                       show_annotation_name = F,
+                                                       
+                                                       annotation_legend_param = list(
+                                                         time = list(title = "Time (h)",
+                                                                     direction = "horizontal",
+                                                                     nrow = 1,
+                                                                     title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                     labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                         conc_level = list(title = "Concentration level",
+                                                                           direction = "horizontal",
+                                                                           nrow = 1,
+                                                                           title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                           labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                       )
+                    )
+)
+
+name = "FLUOXETINEHYDROCHLORIDE"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix)) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+heatmap5 <- Heatmap(matrix = matrix, cluster_columns = F, cluster_rows = F, show_column_names = F,
+                    column_title = "Fluoxetine",
+                    column_title_gp = gpar(fontsize = 12, fontface = 2),
+                    width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                    height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                    col = col_fun,
+                    show_heatmap_legend = F,
+                    row_split = row_split, row_gap = unit(0.15, "cm"),
+                    top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                         filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |>
+                                                         distinct(sample_id, time, conc_level) |>
+                                                         arrange(time, conc_level) |>
+                                                         mutate(time = factor(time, levels = c("8", "24"))) |>
+                                                         column_to_rownames("sample_id"),
+                                                       col = list(time = topcolor$time,
+                                                                  conc_level = topcolor$conc_level),
+                                                       annotation_label = c("Time (h)", "Concentration level"),
+                                                       show_annotation_name = F,
+
+                                                       annotation_legend_param = list(
+                                                         time = list(title = "Time (h)",
+                                                                     direction = "horizontal",
+                                                                     nrow = 1,
+                                                                     title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                     labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                         conc_level = list(title = "Concentration level",
+                                                                           direction = "horizontal",
+                                                                           nrow = 1,
+                                                                           title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                           labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                       )
+                    )
+)
+
+name = "INTERFERONALPHAHUMAN"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix), time %in% c("8", "24")) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+heatmap6 <- Heatmap(matrix = matrix, cluster_columns = F, cluster_rows = F, show_column_names = F,
+                    column_title = "IFN-\u03B1",
+                    column_title_gp = gpar(fontsize = 12, fontface = 2),
+                    width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                    height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                    col = col_fun,
+                    show_heatmap_legend = F,
+                    row_split = row_split, row_gap = unit(0.15, "cm"),
+                    top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                         filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |>
+                                                         distinct(sample_id, time, conc_level) |>
+                                                         arrange(time, conc_level) |>
+                                                         mutate(time = factor(time, levels = c("8", "24"))) |>
+                                                         column_to_rownames("sample_id"),
+                                                       col = list(time = topcolor$time,
+                                                                  conc_level = topcolor$conc_level),
+                                                       annotation_label = c("Time (h)", "Concentration level"),
+                                                       show_annotation_name = F,
+                                                       
+                                                       annotation_legend_param = list(
+                                                         time = list(title = "Time (h)",
+                                                                     direction = "horizontal",
+                                                                     nrow = 1,
+                                                                     title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                     labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                         conc_level = list(title = "Concentration level",
+                                                                           direction = "horizontal",
+                                                                           nrow = 1,
+                                                                           title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                           labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                       )
+                    )
+)
+
+name = "TNFALPHARAT"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix)) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+heatmap7 <- Heatmap(matrix = matrix, cluster_columns = F, cluster_rows = F, show_column_names = F,
+                    column_title = "TNF-\u03B1",
+                    column_title_gp = gpar(fontsize = 12, fontface = 2, fontfamily="URWTimes"),
+                    width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                    height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                    col = col_fun, 
+                    show_heatmap_legend = F,
+                    row_split = row_split, row_gap = unit(0.15, "cm"),
+                    
+                    top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                         filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |> 
+                                                         distinct(sample_id, time, conc_level) |> 
+                                                         arrange(time, conc_level) |> 
+                                                         mutate(time = factor(time, levels = c("8", "24"))) |> 
+                                                         column_to_rownames("sample_id"),
+                                                       col = list(time = topcolor$time,
+                                                                  conc_level = topcolor$conc_level),
+                                                       annotation_label = c("Time (h)", "Concentration level"),
+                                                       show_annotation_name = F,
+                                                       
+                                                       annotation_legend_param = list(
+                                                         time = list(title = "Time (h)",
+                                                                     direction = "horizontal",
+                                                                     nrow = 1,
+                                                                     title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                     labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                         conc_level = list(title = "Concentration level",
+                                                                           direction = "horizontal",
+                                                                           nrow = 1,
+                                                                           title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                           labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                       )
+                    )
+)
+
+name = "AFLATOXINB1"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix)) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+heatmap8 <- Heatmap(matrix = matrix, cluster_columns = F, cluster_rows = F, show_column_names = F,
+                    column_title = "Aflatoxin B1",
+                    column_title_gp = gpar(fontsize = 12, fontface = 2),
+                    width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                    height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                    col = col_fun, 
+                    show_heatmap_legend = F,
+                    row_split = row_split, row_gap = unit(0.15, "cm"),
+                    
+                    top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                         filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |> 
+                                                         distinct(sample_id, time, conc_level) |> 
+                                                         arrange(time, conc_level) |> 
+                                                         mutate(time = factor(time, levels = c("8", "24"))) |> 
+                                                         column_to_rownames("sample_id"),
+                                                       col = list(time = topcolor$time,
+                                                                  conc_level = topcolor$conc_level),
+                                                       annotation_label = c("Time (h)", "Concentration level"),
+                                                       show_annotation_name = F,
+                                                       
+                                                       annotation_legend_param = list(
+                                                         time = list(title = "Time (h)",
+                                                                     direction = "horizontal",
+                                                                     nrow = 1,
+                                                                     title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                     labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                         conc_level = list(title = "Concentration level",
+                                                                           direction = "horizontal",
+                                                                           nrow = 1,
+                                                                           title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                           labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                       )
+                    )
+)
+
+name = "ACETAMINOPHEN"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix), time %in% c("8", "24")) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+heatmap9 <- Heatmap(matrix = matrix, cluster_columns = F, cluster_rows = F, show_column_names = F,
+                    column_title = "Acetaminophen",
+                    column_title_gp = gpar(fontsize = 12, fontface = 2),
+                    width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                    height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                    col = col_fun, 
+                    show_heatmap_legend = F,
+                    row_split = row_split, row_gap = unit(0.15, "cm"),
+                    
+                    top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                         filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |> 
+                                                         distinct(sample_id, time, conc_level) |> 
+                                                         arrange(time, conc_level) |> 
+                                                         mutate(time = factor(time, levels = c("8", "24"))) |> 
+                                                         column_to_rownames("sample_id"),
+                                                       col = list(time = topcolor$time,
+                                                                  conc_level = topcolor$conc_level),
+                                                       annotation_label = c("Time (h)", "Concentration level"),
+                                                       show_annotation_name = F,
+                                                       
+                                                       annotation_legend_param = list(
+                                                         time = list(title = "Time (h)",
+                                                                     direction = "horizontal",
+                                                                     nrow = 1,
+                                                                     title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                     labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                         conc_level = list(title = "Concentration level",
+                                                                           direction = "horizontal",
+                                                                           nrow = 1,
+                                                                           title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                           labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                       )
+                    )
+)
+
+name = "DIETHYLMALEATE"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix), time %in% c("8", "24")) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+heatmap10 <- Heatmap(matrix = matrix, cluster_columns = F, cluster_rows = F, show_column_names = F,
+                    column_title = "Diethyl\nMaleate",
+                    column_title_gp = gpar(fontsize = 12, fontface = 2),
+                    width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                    height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                    col = col_fun, 
+                    show_heatmap_legend = F,
+                    row_split = row_split, row_gap = unit(0.15, "cm"),
+                    
+                    top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                         filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |> 
+                                                         distinct(sample_id, time, conc_level) |> 
+                                                         arrange(time, conc_level) |> 
+                                                         mutate(time = factor(time, levels = c("8", "24"))) |> 
+                                                         column_to_rownames("sample_id"),
+                                                       col = list(time = topcolor$time,
+                                                                  conc_level = topcolor$conc_level),
+                                                       annotation_label = c("Time (h)", "Concentration level"),
+                                                       show_annotation_name = F,
+                                                       
+                                                       annotation_legend_param = list(
+                                                         time = list(title = "Time (h)",
+                                                                     direction = "horizontal",
+                                                                     nrow = 1,
+                                                                     title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                     labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                         conc_level = list(title = "Concentration level",
+                                                                           direction = "horizontal",
+                                                                           nrow = 1,
+                                                                           title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                           labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                       )
+                    )
+)
+
+# last one
+name = "ETHIONINE"
+matrix <- data[rownames(selected_modules), grep(name, colnames(data))]
+matrix_col_order <- rptec$eg_score |> filter(sample_id %in% colnames(matrix), time %in% c("8", "24")) |> distinct(sample_id, time, conc_level) |> arrange(time, conc_level) |>  pull(sample_id)
+matrix <- matrix[, matrix_col_order]
+heatmap_last <- Heatmap(matrix = matrix, cluster_columns = F, cluster_rows = F, show_column_names = F,
+                        
+                        # row_title = "Module",
+                        row_title_side = "right",
+                        show_row_names = F,
+                        
+                        row_split = row_split, row_gap = unit(0.15, "cm"),
+                        
+                        column_title = "Ethionine",
+                        column_title_gp = gpar(fontsize = 12, fontface = 2),
+                        width = ncol(matrix)*unit(WIDTH_FACTOR, "mm"),
+                        height = nrow(matrix)*unit(HEIGHT_FACTOR, "mm"),
+                        col = col_fun, 
+                        show_heatmap_legend = T,
+                        heatmap_legend_param = list(title = "Eigengene", 
+                                                    direction = "horizontal",
+                                                    title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                    labels_gp = grid::gpar(fontsize = 12),
+                                                    legend_width = unit(6, "cm"),
+                                                    
+                                                    at = c(-3, -2, -1, -0.5, 0, 0.5, 1, 2, 3),
+                                                    labels = c("-3", "-2", "-1", "-0.5", "0", "0.5", "1", "2", "3"),
+                                                    break_dist=1
+                                                    
+                                                    
+                                                    # lgd = Legend(col_fun = col_fun, at = c(-10,-3:3,10), break_dist = 1)
+                                                    
+                        ),
+                        top_annotation = HeatmapAnnotation(df = rptec$eg_score |>
+                                                             filter(sample_id %in% colnames(matrix[, grep(name, colnames(matrix))])) |> 
+                                                             distinct(sample_id, time, conc_level) |> 
+                                                             arrange(time, conc_level) |> 
+                                                             mutate(time = factor(time, levels = c("8", "24"))) |> 
+                                                             column_to_rownames("sample_id"),
+                                                           col = list(time = topcolor$time,
+                                                                      conc_level = topcolor$conc_level),
+                                                           annotation_label = c("Time (h)", "Concentration level"),
+                                                           show_annotation_name = F,
+                                                           
+                                                           annotation_legend_param = list(
+                                                             time = list(title = "Time (h)",
+                                                                         direction = "horizontal",
+                                                                         nrow = 1,
+                                                                         title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                         labels_gp = grid::gpar(fontsize = 12, fontface = 1)),
+                                                             conc_level = list(title = "Concentration level",
+                                                                               direction = "horizontal",
+                                                                               nrow = 1,
+                                                                               title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                                               labels_gp = grid::gpar(fontsize = 12, fontface = 1))
+                                                           )
+                        )
+)
+
+le <- setNames(object = selected_modules$`KE Group`, nm = rownames(selected_modules))
+col_ke = set_names(x = c("#E674AD","#DD3226","#A0522D","#f58231", "#39C6F4","#3CB44B"), nm = sort(unique(selected_modules$KE)))
+heat_legend <- Heatmap(matrix = le,
+                       show_column_names = FALSE,
+                       row_title = "Module",
+                       row_title_side = "left", 
+                       row_split = row_split, row_gap = unit(0.15, "cm"),
+                       name = "KE group",
+                       width = HEIGHT_FACTOR*unit(1, "mm"),
+                       height = HEIGHT_FACTOR*unit(1, "mm"),
+                       cluster_rows = FALSE, 
+                       col = col_ke,
+                       heatmap_legend_param = list(title = "Stress Response Pathway",
+                                                   ncol = 4,
+                                                   direction = "horizontal",
+                                                   title_gp = grid::gpar(fontsize = 12, fontface = 2),
+                                                   labels_gp = grid::gpar(fontsize = 12))
+)
+
+CairoPDF("wDRW_PHH.pdf", width = 20, height = 8, family = "URWTimes")
+
+draw(object = heatmap1 + heatmap5 + heatmap3 + heatmap2 + heatmap4 + heatmap6 + heatmap7 + heatmap8 +heatmap9 + heatmap10 + heatmap_last + heat_legend, 
+     merge_legend = TRUE, 
+     annotation_legend_side = "bottom",
+     heatmap_legend_side = "bottom",
+     column_title_gp = gpar(fontsize = 8))
+
+dev.off()
+graphics.off()
+```
+

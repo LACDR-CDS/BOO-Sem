@@ -976,6 +976,49 @@ sum(GRR_glm_fit_df$outlier, na.rm = TRUE)
 ```
 There are 4914 outliers found. This is less than the eg score.
 
+
+```{r}
+total_modules_all <- GRR_glm_fit_df %>%
+  filter(module_number != 0) %>%
+  summarise(n = n_distinct(module_number)) %>%
+  pull(n) # for normalization
+```
+
+
+```{r}
+total_conditions_all <- GRR_glm_fit_df %>%
+  filter(module_number != 0) %>%
+  summarise(n = n_distinct(sample_id)) %>%
+  pull(n) # for normalization
+```
+
+
+```{r}
+# Make a summarizing df for comparing with other datasets and scoring algorithms
+outlier_density <- GRR_glm_fit_df %>%
+  filter(outlier, module_number != 0) %>%
+  group_by(outlier_direction) %>%
+  summarise(
+    total_outliers = n(),
+    .groups = "drop"
+  ) %>%
+  bind_rows(
+    tibble(
+      outlier_direction = "Total",
+      total_outliers = sum(.$total_outliers)
+    )
+  ) %>%
+  mutate(
+    total_modules = total_modules_all,
+    total_conditions = total_conditions_all,
+    density = total_outliers / (total_modules * total_conditions)
+  )
+```
+
+```{r}
+print(outlier_density)
+```
+
 ```{r}
 ggplot(GRR_glm_fit_df, aes(x = abs(drw_zscore), y = abs(GRR))) +
   geom_point(aes(color = outlier), alpha = 0.6, size = 0.9) +
@@ -1086,7 +1129,49 @@ GRR_glm_fit_df <- GRR_glm_fit_df %>%
 ```{r}
 sum(GRR_glm_fit_df$outlier, na.rm = TRUE)
 ```
-There are 4677 outliers found. This is less than the eg score.
+There are 6998 outliers found. This is less than the eg score.
+
+```{r}
+total_modules_all <- GRR_glm_fit_df %>%
+  filter(module_number != 0) %>%
+  summarise(n = n_distinct(module_number)) %>%
+  pull(n) # for normalization
+```
+
+
+```{r}
+total_conditions_all <- GRR_glm_fit_df %>%
+  filter(module_number != 0) %>%
+  summarise(n = n_distinct(sample_id)) %>%
+  pull(n) # for normalization
+```
+
+
+```{r}
+# Make a summarizing df for comparing with other datasets and scoring algorithms
+outlier_density <- GRR_glm_fit_df %>%
+  filter(outlier, module_number != 0) %>%
+  group_by(outlier_direction) %>%
+  summarise(
+    total_outliers = n(),
+    .groups = "drop"
+  ) %>%
+  bind_rows(
+    tibble(
+      outlier_direction = "Total",
+      total_outliers = sum(.$total_outliers)
+    )
+  ) %>%
+  mutate(
+    total_modules = total_modules_all,
+    total_conditions = total_conditions_all,
+    density = total_outliers / (total_modules * total_conditions)
+  )
+```
+
+```{r}
+print(outlier_density)
+```
 
 ```{r}
 ggplot(GRR_glm_fit_df, aes(x = abs(drw_zscore), y = abs(wGRR))) +

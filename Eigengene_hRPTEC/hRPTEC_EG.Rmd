@@ -230,7 +230,7 @@ $$
 
 
 ```{r}
-#GRR_vs_DRW   <- readRDS(file.path(data_dir, "GRR_vs_DRW_cor_eg_RPTEC.rds"))
+GRR_vs_DRW   <- readRDS(file.path(data_dir, "GRR_vs_DRW_cor_eg_RPTEC.rds"))
 ```
 
 ```{r}
@@ -374,6 +374,49 @@ GRR_glm_fit_df <- GRR_glm_fit_df %>%
 sum(GRR_glm_fit_df$outlier, na.rm = TRUE)
 ```
 There are 8862 outliers found.
+
+
+```{r}
+total_modules_all <- GRR_glm_fit_df %>%
+  filter(module_number != 0) %>%
+  summarise(n = n_distinct(module_number)) %>%
+  pull(n) # for normalization
+```
+
+
+```{r}
+total_conditions_all <- GRR_glm_fit_df %>%
+  filter(module_number != 0) %>%
+  summarise(n = n_distinct(sample_id)) %>%
+  pull(n) # for normalization
+```
+
+
+```{r}
+# Make a summarizing df for comparing with other datasets and scoring algorithms
+outlier_density <- GRR_glm_fit_df %>%
+  filter(outlier, module_number != 0) %>%
+  group_by(outlier_direction) %>%
+  summarise(
+    total_outliers = n(),
+    .groups = "drop"
+  ) %>%
+  bind_rows(
+    tibble(
+      outlier_direction = "Total",
+      total_outliers = sum(.$total_outliers)
+    )
+  ) %>%
+  mutate(
+    total_modules = total_modules_all,
+    total_conditions = total_conditions_all,
+    density = total_outliers / (total_modules * total_conditions)
+  )
+```
+
+```{r}
+print(outlier_density)
+```
 
 ```{r}
 ggplot(GRR_glm_fit_df, aes(x = abs(eg_score), y = abs(GRR))) +

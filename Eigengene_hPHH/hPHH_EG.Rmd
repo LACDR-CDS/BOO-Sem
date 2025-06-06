@@ -104,6 +104,17 @@ $$
 GRR = \frac{ \displaystyle \sum_{i=1}^{n} \left( |\log_2 \mathrm{FC}_i| > 1.0 \ \land \ p_{\mathrm{adj},i} < 0.05 \right) }{ n }
 $$
 
+$$
+A_{M_j} \;=\;
+\mathrm{if}\,\bigl[\,
+\mathrm{median}\bigl(\mathrm{TOM}(A)\bigr)
+>
+\mathrm{median}\bigl(\mathrm{TOM}(B)\bigr)
+\,\bigr]
+\;\mathrm{then}\;
+A \leftarrow B \cdot \mathrm{TOM}
+$$
+
 ## Merge module_definition with expression_long
 
 Add module_definition to the genes

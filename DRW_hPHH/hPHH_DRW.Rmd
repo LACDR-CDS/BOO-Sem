@@ -61,7 +61,8 @@ The recursive walker will be performed until the L1-norm ,the difference (delta)
 Afterwards, the module activty for module $M_j$ will be calculated with the following formula:
 
 $$
-a(M_j) = \frac{ \sum_{i=1}^{n_j} W_\infty(g_i) \cdot \left| \log_2 \mathrm{FC}(g_i) \right| }{n_j \cdot \sqrt{\sum_{i=1}^{n_j} \left( W_\infty(g_i) \right)^2 } }
+wDRW(M_j) = \frac{ \sum_{i=1}^{n_j} W_\infty(g_i) \cdot \log_2 \mathrm{FC}(g_i) }
+{ \sqrt{n_j} \cdot \sqrt{ \sum_{i=1}^{n_j} \left( W_\infty(g_i) \right)^2 } }
 $$
 
 Here, the $W_{∞}$ represents the weight of each gene in the network and log2fc represents the expression value. The sum of all the $W_{∞}$ vector multiplied by the abs log2fc of the genes will be divided by the square root of the sum of the squared $W_{∞}$ vector for each gene. Only genes with a padj value < 0.05 will be used to construct the module activity. The result is an absolute DRW score that represents the network activation of a module.
