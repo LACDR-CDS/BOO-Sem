@@ -1,0 +1,420 @@
+---
+title: "Correlation EG vs wDRW"
+author: "Sem"
+date: "2025-06-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(ggplot2)
+library(tibble)
+library(dplyr)
+```
+
+
+# Introduction
+
+In this .Rmd file, the least and most correlated modules between EG and wDRW in PHH and RPTEC are calculated
+
+## PHH data
+
+```{r}
+data_dir <- "C:/Users/semde/Documents/BOO_Scripts/Data/PHH_TXG-MAPr"
+module_enrichment_PHH   <- readRDS(file.path(data_dir, "module_enrichment.rds"))
+drw_scores_PHH <- readRDS(file.path(data_dir, "drw_scores_PHH_directed.rds"))
+eg_scores_PHH <- readRDS(file.path(data_dir, "eg_score.rds"))
+module_annotation_PHH <- readRDS(file.path(data_dir, "module_annotation.rds"))
+```
+
+## RPTEC data
+
+```{r}
+data_dir <- "C:/Users/semde/Documents/BOO_Scripts/Data/RPTEC_TXG-MAPr"
+module_enrichment_RPTEC   <- readRDS(file.path(data_dir, "module_enrichment.rds"))
+drw_scores_RPTEC <- readRDS(file.path(data_dir, "drw_scores_RPTEC_r0.7.rds"))
+eg_scores_RPTEC <- readRDS(file.path(data_dir, "eg_score.rds"))
+module_annotation_RPTEC <- readRDS(file.path(data_dir, "module_annotation.rds"))
+```
+
+# PHH EG vs wDRW correlation
+
+## Joining
+
+```{r}
+PHH_eg_wDRW_df <- eg_scores_PHH %>%
+  select(sample_id, module_number, eg_score) %>%
+  inner_join(
+    drw_scores_PHH %>%
+      select(condition_id, module_nr, drw_zscore, module_size),
+    by = c("sample_id" = "condition_id", "module_number" = "module_nr")
+  )
+```
+
+## Plotting
+
+```{r}
+ggplot(PHH_eg_wDRW_df, aes(x = drw_zscore, y = eg_score)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  theme_minimal() +
+  labs(
+    title = "PHH: EG score vs wDRW z-score",
+    x = "Eigengene Score (EG)",
+    y = "Weighted Directed Random Walk Score (wDRW)"
+  )
+```
+
+### Calculating Pearson Correlation
+
+```{r}
+cor(PHH_eg_wDRW_df$eg_score, PHH_eg_wDRW_df$drw_zscore, method = "pearson")
+```
+
+```{r}
+module_correlations <- PHH_eg_wDRW_df %>%
+  group_by(module_number) %>%
+  summarise(
+    correlation = cor(eg_score, drw_zscore, method = "pearson"),
+    module_size = first(module_size),
+    .groups = "drop"
+  ) %>%
+  mutate(abs_correlation = abs(correlation)) %>% 
+  arrange(desc(abs_correlation)) %>% 
+  drop_na()
+```
+
+```{r}
+module_correlations_annotated <- module_correlations %>%
+  left_join(
+    module_annotation_PHH %>%
+      mutate(module_number = as.integer(stringr::str_remove(module, "hPHH_"))) %>%
+      select(-module),
+    by = "module_number"
+  )
+```
+
+
+### Most and least correlated modules
+
+#### Most correlated modules
+
+```{r}
+# Bekijk result
+module_correlations_annotated %>% 
+  head(10) %>% 
+  select(-abs_correlation)
+```
+
+#### Least correlated modules
+
+```{r}
+module_correlations_annotated %>%
+  arrange(abs_correlation) %>% 
+  select(-abs_correlation) %>% 
+  head(10)
+```
+
+### Dotplot
+
+#### Preparing
+
+**dit aanpassen voor PHH**
+
+```{r}
+top10_df <- tribble(
+  ~module_number, ~abs_correlation, ~module_size, ~annotation,
+  32, 0.9735108, 54, "DNA Processing",
+  17, 0.9731647, 129, "Cytoskeleton",
+  15, 0.9702463, 142, "Immune Response",
+  50, 0.9668785, 24, "Oxidative Stress",
+  12, 0.9644864, 162, "Cell Cycle",
+  22, 0.9637856, 99, "DNA Processing",
+  61, 0.9616752, 20, "Immune Response",
+  29, 0.9588111, 73, "Energy",
+  33, 0.9581879, 46, "Protein Processing",
+  8, 0.9547510, 380, "Energy"
+)
+```
+
+
+```{r}
+bottom10_df <- tribble(
+  ~module_number, ~abs_correlation, ~module_size, ~annotation,
+  136, 0.03660615, 10, "Cell Cycle",
+  192, 0.05583063, 8, "NA",
+  178, 0.15267001, 8, "Extracellular Matrix",
+  270, 0.21566644, 6, "Lysosome",
+  231, 0.24992180, 7, "NA",
+  230, 0.30322487, 7, "Signalling",
+  85, 0.33395246, 14, "Oxidative Stress",
+  256, 0.34463024, 6, "NA",
+  28, 0.35297726, 73, "Protein Processing",
+  67, 0.35778764, 17, "NA"
+)
+```
+
+```{r}
+combined_df <- bind_rows(top10_df, bottom10_df) %>%
+  mutate(group = if_else(module_number %in% top10_df$module_number, "Top correlated", "Least correlated"))
+```
+
+
+#### Plotting
+
+```{r}
+annotation_colors <- c(
+  "DNA Processing" = "#E674AD",
+  "Cytoskeleton" = "#1f78b4",         
+  "Immune Response" = "#A0522D",
+  "Oxidative Stress" = "#3CB44B",
+  "Cell Cycle" = "#FFDE17",
+  "Mitochondria" = "#39C6F4",
+  "Protein Processing" = "#8DA0CB",
+  "Extracellular Matrix" = "#DD3226",
+  "Lysosome" = "#f58231",
+  "Signalling" = "#6a3d9a",     
+  "NA" = "#999999"
+)
+```
+
+```{r}
+sorted_modules <- combined_df %>%
+  arrange(abs_correlation) %>%
+  pull(module_number)
+
+# Zet module_number als factor met gewenste volgorde
+combined_df <- combined_df %>%
+  mutate(module_number = factor(module_number, levels = sorted_modules))
+```
+
+
+```{r}
+# Plot
+p <- ggplot(combined_df, aes(x = factor(module_number), 
+                             y = abs_correlation, 
+                             size = module_size, 
+                             color = annotation)) +
+  geom_point(alpha = 0.9) +
+  scale_color_manual(values = annotation_colors,
+                     guide = guide_legend(override.aes = list(size = 10))) +
+  scale_size(range = c(10, 20),
+             breaks = c(10, 50, 150, 300)) +
+  scale_y_continuous(limits = c(0, 1)) +   # Y-as 0 tot 1
+  facet_wrap(~group, scales = "free_x", ncol = 2) + 
+  labs(x = "Module number", 
+       y = "Absolute Pearson Correlation", 
+       size = "Module size (n genes)", 
+       color = "Annotation") +
+  theme_minimal(base_size = 14) +
+  theme(
+    strip.text = element_text(size = 16, face = "bold"),  # facet titles
+    axis.text.x = element_text(size = 15, angle = 45, hjust = 1, face = "bold"),
+    axis.text.y = element_text(size = 15),
+    axis.title = element_text(size = 15, face = "bold"),
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 14),  # annotation labels
+    panel.grid.major.x = element_blank(),  # optioneel → schoner
+    panel.grid.minor.x = element_blank()
+  )
+
+p
+```
+
+
+```{r}
+# Save as PDF
+ggsave(filename = "EG_wDRW_correlation_PHH.pdf", plot = p, width = 15, height = 8)
+```
+
+# RPTEC EG vs wDRW correlation
+
+## Joining
+
+```{r}
+RPTEC_eg_wDRW_df <- eg_scores_RPTEC %>%
+  select(sample_id, module_number, eg_score) %>%
+  inner_join(
+    drw_scores_RPTEC %>%
+      select(condition_id, module_nr, drw_zscore, module_size),
+    by = c("sample_id" = "condition_id", "module_number" = "module_nr")
+  )
+```
+
+## Plotting
+
+```{r}
+ggplot(RPTEC_eg_wDRW_df, aes(x = drw_zscore, y = eg_score)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  theme_minimal() +
+  labs(
+    title = "RPTEC: EG score vs wDRW z-score",
+    x = "Eigengene Score (EG)",
+    y = "Weighted Directed Random Walk Score (wDRW)"
+  )
+```
+
+### Calculating Pearson Correlation
+
+```{r}
+cor(RPTEC_eg_wDRW_df$eg_score, RPTEC_eg_wDRW_df$drw_zscore, method = "pearson")
+```
+```{r}
+module_correlations <- RPTEC_eg_wDRW_df %>%
+  group_by(module_number) %>%
+  summarise(
+    correlation = cor(eg_score, drw_zscore, method = "pearson"),
+    module_size = first(module_size),
+    .groups = "drop"
+  ) %>%
+  mutate(abs_correlation = abs(correlation)) %>% 
+  arrange(desc(abs_correlation)) %>% 
+  drop_na()
+```
+
+```{r}
+module_correlations_annotated <- module_correlations %>%
+  left_join(
+    module_annotation_RPTEC %>%
+      mutate(module_number = as.integer(stringr::str_remove(module, "hRPTECTERT1_"))) %>%
+      select(-module),
+    by = "module_number"
+  )
+```
+
+
+### Most and least correlated modules
+
+#### Most correlated modules
+
+```{r}
+# Bekijk result
+module_correlations_annotated %>% 
+  head(10) %>% 
+  select(-abs_correlation)
+```
+
+#### Least correlated modules
+
+```{r}
+module_correlations_annotated %>%
+  arrange(abs_correlation) %>% 
+  select(-abs_correlation) %>% 
+  head(10)
+```
+
+### Dotplot
+
+#### Preparing
+
+```{r}
+top10_df <- tribble(
+  ~module_number, ~abs_correlation, ~module_size, ~annotation,
+  32, 0.9735108, 54, "DNA Processing",
+  17, 0.9731647, 129, "Cytoskeleton",
+  15, 0.9702463, 142, "Immune Response",
+  50, 0.9668785, 24, "Oxidative Stress",
+  12, 0.9644864, 162, "Cell Cycle",
+  22, 0.9637856, 99, "DNA Processing",
+  61, 0.9616752, 20, "Immune Response",
+  29, 0.9588111, 73, "Energy",
+  33, 0.9581879, 46, "Protein Processing",
+  8, 0.9547510, 380, "Energy"
+)
+```
+
+
+```{r}
+bottom10_df <- tribble(
+  ~module_number, ~abs_correlation, ~module_size, ~annotation,
+  136, 0.03660615, 10, "Cell Cycle",
+  192, 0.05583063, 8, "NA",
+  178, 0.15267001, 8, "Extracellular Matrix",
+  270, 0.21566644, 6, "Lysosome",
+  231, 0.24992180, 7, "NA",
+  230, 0.30322487, 7, "Signalling",
+  85, 0.33395246, 14, "Oxidative Stress",
+  256, 0.34463024, 6, "NA",
+  28, 0.35297726, 73, "Protein Processing",
+  67, 0.35778764, 17, "NA"
+)
+```
+
+```{r}
+combined_df <- bind_rows(top10_df, bottom10_df) %>%
+  mutate(group = if_else(module_number %in% top10_df$module_number, "Top correlated", "Least correlated"))
+```
+
+
+#### Plotting
+
+```{r}
+annotation_colors <- c(
+  "DNA Processing" = "#E674AD",
+  "Cytoskeleton" = "#1f78b4",         
+  "Immune Response" = "#A0522D",
+  "Oxidative Stress" = "#3CB44B",
+  "Cell Cycle" = "#FFDE17",
+  "Mitochondria" = "#39C6F4",
+  "Protein Processing" = "#8DA0CB",
+  "Extracellular Matrix" = "#DD3226",
+  "Lysosome" = "#f58231",
+  "Signalling" = "#6a3d9a",     
+  "NA" = "#999999"
+)
+```
+
+```{r}
+sorted_modules <- combined_df %>%
+  arrange(abs_correlation) %>%
+  pull(module_number)
+
+# Zet module_number als factor met gewenste volgorde
+combined_df <- combined_df %>%
+  mutate(module_number = factor(module_number, levels = sorted_modules))
+```
+
+
+```{r}
+# Plot
+p <- ggplot(combined_df, aes(x = factor(module_number), 
+                             y = abs_correlation, 
+                             size = module_size, 
+                             color = annotation)) +
+  geom_point(alpha = 0.9) +
+  scale_color_manual(values = annotation_colors,
+                     guide = guide_legend(override.aes = list(size = 10))) +
+  scale_size(range = c(10, 20),
+             breaks = c(10, 50, 150, 300)) +
+  scale_y_continuous(limits = c(0, 1)) +   # Y-as 0 tot 1
+  facet_wrap(~group, scales = "free_x", ncol = 2) +  # FACET naast elkaar
+  labs(x = "Module number", 
+       y = "Absolute Pearson Correlation", 
+       size = "Module size (n genes)", 
+       color = "Annotation") +
+  theme_minimal(base_size = 14) +
+  theme(
+    strip.text = element_text(size = 16, face = "bold"),  # facet titles
+    axis.text.x = element_text(size = 15, angle = 45, hjust = 1, face = "bold"),
+    axis.text.y = element_text(size = 15),
+    axis.title = element_text(size = 15, face = "bold"),
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 14),  # annotation labels
+    panel.grid.major.x = element_blank(),  # optioneel → schoner
+    panel.grid.minor.x = element_blank()
+  )
+
+p
+```
+
+
+```{r}
+# Save as PDF
+ggsave(filename = "EG_wDRW_correlation_RPTEC.pdf", plot = p, width = 15, height = 8)
+```
+
+

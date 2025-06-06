@@ -39,8 +39,6 @@ data_dir <- "C:/Users/semde/Documents/BOO_Scripts/Data/PHH_TXG-MAPr"
 module_enrichment_PHH   <- readRDS(file.path(data_dir, "module_enrichment.rds"))
 drw_scores_PHH <- readRDS(file.path(data_dir, "drw_scores_PHH_directed.rds"))
 eg_scores_PHH <- readRDS(file.path(data_dir, "eg_score.rds"))
-#sdrw_scores_PHH <- readRDS(file.path(data_dir, "sdrw_scores_PHH_directed.rds")) # not finished yet
-
 ```
 
 ## RPTEC data
@@ -249,6 +247,7 @@ CTD_chemicals_unique <- CTD_Pathways_reactome %>%
 ```{r}
 eg_scores_PHH %>%
   arrange(desc(abs_eg_score)) %>%
+  distinct(chemical, module_number, .keep_all = TRUE) %>%
   head(100)
 ```
 
@@ -275,6 +274,9 @@ eg_scores_PHH <- eg_scores_PHH %>%
     chemical == "AFLATOXINB1" ~ "Aflatoxin B1",
     chemical == "NMETHYLNNITROSOUREA" ~ "Methylnitrosourea",
     chemical == "TNFALPHARAT" ~ "Tumor Necrosis Factors",
+    chemical == "TUNICAMYCIN" ~ "Tunicamycin",
+    chemical == "ACETAMINOPHEN" ~ "Acetaminophen",
+    chemical == "INTERLEUKIN1BETAHUMAN" ~ "Interleukins",
     TRUE ~ chemical  # fallback to original if no match
   ))
 ```
@@ -282,12 +284,14 @@ eg_scores_PHH <- eg_scores_PHH %>%
 ```{r}
 eg_scores_PHH %>%
   arrange(desc(abs_eg_score)) %>%
+  distinct(chemical, module_number, .keep_all = TRUE) %>%
   head(100)
 ```
 
 ```{r}
 top100_results_PHH_eg <- eg_scores_PHH %>%
   arrange(desc(abs_eg_score)) %>%
+  distinct(chemical, module_number, .keep_all = TRUE) %>%
   slice_head(n = 100) %>%
   transmute(chemical_ctd,
             module_nr = module_number,
@@ -336,7 +340,8 @@ print(top100_results_PHH_eg)
 ```{r}
 drw_scores_PHH %>%
   arrange(desc(drw_zscore)) %>%
-  head(50)
+  distinct(chemical, module_number, .keep_all = TRUE) %>%
+  head(100)
 ```
 
 
@@ -390,12 +395,14 @@ drw_scores_PHH <- drw_scores_PHH %>%
 ```{r}
 drw_scores_PHH %>%
   arrange(desc(drw_zscore)) %>%
+  distinct(chemical, module_number, .keep_all = TRUE) %>%
   head(100)
 ```
 
 ```{r}
 top100_results_PHH_drw <- drw_scores_PHH %>%
   arrange(desc(drw_zscore)) %>%
+  distinct(chemical, module_number, .keep_all = TRUE) %>%
   slice_head(n = 100) %>%
   transmute(chemical_ctd,
             module_nr = module_number,
@@ -444,7 +451,8 @@ print(top100_results_PHH_drw)
 
 ```{r}
 eg_scores_RPTEC %>%
-  arrange(desc(abs_eg_score)) %>%
+  arrange(desc(abs_eg_score)) %>%   
+  distinct(chemical, module_number, .keep_all = TRUE) %>%  # top 100 unique combinations
   head(100)
 ```
 
@@ -460,19 +468,23 @@ eg_scores_RPTEC <- eg_scores_RPTEC %>%
     chemical == "RAPAMYCIN" ~ "Sirolimus",
     chemical == "CISPLATIN" ~ "Cisplatin",
     chemical == "ZOLENDRONICACID" ~ "Zoledronic Acid",
+    chemical == "INTERLEUKIN1BETA" ~ "Interleukins",
+    chemical == "AMPHOTERICINB" ~ "Amphotericin B",
     TRUE ~ chemical  # fallback to original if no match
   ))
 ```
 
 ```{r}
 eg_scores_RPTEC %>%
-  arrange(desc(abs_eg_score)) %>%
+  arrange(desc(abs_eg_score)) %>%   
+  distinct(chemical, module_number, .keep_all = TRUE) %>%  # top 100 unique combinations
   head(100)
 ```
 
 ```{r}
 top100_results_RPTEC_eg <- eg_scores_RPTEC %>%
   arrange(desc(abs_eg_score)) %>%
+  distinct(chemical_ctd, module_number, .keep_all = TRUE) %>% # Top unique combinations
   slice_head(n = 100) %>%
   transmute(chemical_ctd,
             module_nr = module_number,
@@ -519,8 +531,14 @@ print(top100_results_RPTEC_eg)
 ## DRW scores
 
 ```{r}
+drw_scores_RPTEC <- drw_scores_RPTEC %>% 
+  filter(chemical != "EPIDERMALGROWTHFACTOR") # No EGF in Database, however, only one entry in top k modules
+```
+
+```{r}
 drw_scores_RPTEC %>%
   arrange(desc(drw_zscore)) %>%
+  distinct(chemical, module_number, .keep_all = TRUE) %>% 
   head(100)
 ```
 
@@ -545,6 +563,7 @@ drw_scores_RPTEC <- drw_scores_RPTEC %>%
     chemical == "GENTAMYCIN" ~ "Gentamicins",
     chemical == "PARACETAMOL" ~ "Acetaminophen",
     chemical == "TUMORNECROSEFACTORALFA" ~ "Tumor Necrosis Factors",
+    chemical == "CITRININ" ~ "Citrinin",
     TRUE ~ chemical  # fallback to original if no match
   ))
 ```
@@ -552,12 +571,14 @@ drw_scores_RPTEC <- drw_scores_RPTEC %>%
 ```{r}
 drw_scores_RPTEC %>%
   arrange(desc(abs(drw_zscore))) %>%
+  distinct(chemical, module_number, .keep_all = TRUE) %>%
   head(100)
 ```
 
 ```{r}
 top100_results_RPTEC_drw <- drw_scores_RPTEC %>%
   arrange(desc(abs(drw_zscore))) %>%
+  distinct(chemical, module_number, .keep_all = TRUE) %>%
   slice_head(n = 100) %>%
   transmute(chemical_ctd,
             module_nr = module_number,
@@ -661,7 +682,6 @@ accuracy_results$dataset <- factor(accuracy_results$dataset, levels = c("PHH_EG"
 
 Plot
 
-*TO DO* Drop the Epidermal growth factor and dont calculate it in accuracy calculation 
 
 ```{r}
 ggplot(accuracy_results, aes(x = dataset, y = accuracy, fill = factor(k))) +

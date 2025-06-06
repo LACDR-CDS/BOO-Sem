@@ -702,14 +702,14 @@ No NA values
 The DRW scores will be normalized for their module_size.
 
 ```{r}
-#drw_scores <- drw_scores %>%
- # left_join(
-  #  GRR_vs_eg_score %>% select(sample_id, module_number, module_size),
-   # by = c("condition_id" = "sample_id", "module_nr" = "module_number")
-  #) %>%
-  #mutate(
-   # drw_zscore = drw_score / module_size
-  #)
+drw_scores <- drw_scores %>%
+  left_join(
+    GRR_vs_eg_score %>% select(sample_id, module_number, module_size),
+    by = c("condition_id" = "sample_id", "module_nr" = "module_number")
+  ) %>%
+  mutate(
+    drw_zscore = drw_score / module_size
+  )
 ```
 
 ```{r}
@@ -732,40 +732,16 @@ $$
 wGRR = \frac{ \displaystyle \sum_{i}^{n} \left( |\log_2 \mathrm{FC}_i| > 1.0 \land p_{\mathrm{adj},i} < 0.05 \right) \cdot \mathrm{cor\_eg}_i }{ n }
 $$
 
-## GRR
+## GRR and wGRR
 
 ```{r}
 GRR_vs_DRW <- drw_scores %>%
   left_join(
-    GRR_vs_eg_score %>% select(sample_id, module_number, GRR),
+    GRR_vs_eg_score %>% select(sample_id, module_number, GRR, wGRR),
     by = c("condition_id" = "sample_id", "module_nr" = "module_number")
   )
 ```
 
-## wGRR
-
-```{r}
-#weighted_grr_df <- expression_cor_eg %>%
- # mutate(is_significant = as.numeric(abs(log2fc) > 1 & padj < 0.05)) %>%
-  #group_by(sample_id, module_number) %>%
-  #summarise(
-   # wGRR = sum(is_significant * abs(cor_eg), na.rm = TRUE),
-    #.groups = "drop"
-  #)  # already calculated in the hPHH_EG file 
-```
-
-```{r}
-weighted_grr_df <- readRDS(file.path(data_dir, "GRR_vs_eg_score_PHH.rds"))
-```
-
-```{r}
-# Join the calculated wGRR with GRR_vs_DRW
-GRR_vs_DRW <- GRR_vs_DRW %>%
-  left_join(
-    weighted_grr_df %>% select(sample_id, module_number, wGRR, sig_genes),
-    by = c("condition_id" = "sample_id", "module_nr" = "module_number")
-  )
-```
 
 ```{r}
 sum(is.na(GRR_vs_DRW$wGRR))
@@ -775,54 +751,71 @@ sum(is.na(GRR_vs_DRW$wGRR))
 min(GRR_vs_DRW$wGRR)
 ```
 
-```{r}
-#saveRDS(GRR_vs_DRW, file = "GRR_vs_DRW_cor_eg.rds") # saving the wGRR for other scoring methods EDIT already calculated in the hPHH_EG.rmd file 
-```
-
-## Density plots of GRR and DRW score
+## Density plots of GRR, wGRR and DRW score
 
 ```{r}
-ggplot(GRR_vs_DRW, aes(x = wGRR)) +
+ggplot(GRR_vs_DRW, aes(x = abs(GRR))) +
   geom_histogram(aes(y = ..density..), bins = 50, fill = "green", alpha = 0.6) +
   geom_density(color = "black") +
-  theme_minimal() + labs(title = "Distribution of Gene Response Rate in PHH dataset")
+  theme_minimal() + labs(title = "Distribution of Gene Response Rate (GRR) in PHH dataset")
 ```
-Like expected, the wGRR shows a logaritmic distribution due to the count data nature.
+
+```{r}
+ggplot(GRR_vs_DRW, aes(x = abs(wGRR))) +
+  geom_histogram(aes(y = ..density..), bins = 50, fill = "blue", alpha = 0.6) +
+  geom_density(color = "black") +
+  theme_minimal() + labs(title = "Distribution of Weighted Gene Response Rate (wGRR) in PHH dataset")
+```
+
+Both abs(wGRR) and abs(GRR) log distributed
 
 ```{r}
 ggplot(GRR_vs_DRW, aes(x = drw_zscore)) +
   geom_histogram(aes(y = ..density..), bins = 50, fill = "red", alpha = 0.6) +
   geom_density(color = "black") +
-  theme_minimal() + labs(title = "Distribution of DRW zScore in PHH dataset")
+  theme_minimal() + labs(title = "Distribution of wDRW score in PHH dataset")
 ```
-DRW_zscore also logarithmic distributed due to using the abs(log2fc) in the pathway activity inference
+Normal distribution
 
-## Visualize GRR vs wDRW zscore with a linear fit
+## Visualize GRR and wGRR vs DRW score with a linear fit
 
 ```{r}
-ggplot(GRR_vs_DRW, aes(x = drw_zscore, y = wGRR)) +
+ggplot(GRR_vs_DRW, aes(x = drw_zscore, y = abs(GRR))) +
   geom_point(alpha = 0.6) +
   geom_smooth(method = "lm", se = FALSE, color = "blue") +
   theme_minimal() +
   labs(
-    title = "Weighted Gene Response Rate vs DRW Score in PHH",
+    title = "Abs Gene Response Rate (GRR) vs DRW Score in PHH",
     x = "Weighted Directed Random Walk score (wDRW)",
-    y = "Weighted Gene Response Rate (wGRR)"
+    y = "Abs Gene Response Rate (GRR)"
   )
 ```
 
+```{r}
+ggplot(GRR_vs_DRW, aes(x = drw_zscore, y = abs(wGRR))) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  theme_minimal() +
+  labs(
+    title = "Abs Weighted Gene Response Rate (wGRR) vs DRW Score in PHH",
+    x = "Weighted Directed Random Walk score (wDRW)",
+    y = "Abs Weighted Gene Response Rate (wGRR)"
+  )
+```
 
-## Binomial Generalized Linear Model (GLM)
+The linear fit does not fit the data well visually, so a binomial glm will be fitted and outliers will be calculated from this fit.
+
+## Binomial Generalized Linear Model (GLM): GRR vs DRW
 
 ```{r}
 glm_data <- GRR_vs_DRW %>%
-  filter(!is.na(wGRR), !is.na(drw_zscore)) # This filtering was performed as the function was first tested on a subset, but the filtering is irrelevant for the whole dataset as there are no NAs
+  filter(!is.na(GRR), !is.na(drw_zscore)) # This filtering was performed as the function was first tested on a subset, but the filtering is irrelevant for the whole dataset as there are no NAs
 ```
 
 
 ```{r}
 glm_fit <- glm(
-  wGRR ~ drw_zscore,
+  abs(GRR) ~ abs(drw_zscore), # absolute because of binomial
   data = glm_data,
   family = quasibinomial(link = "logit") # quasibinomial as the wGRR is a proportion multiplied by a continuous variable, the cor_eg.
 )
@@ -834,37 +827,30 @@ glm_predictions <- predict(glm_fit, type = "response")
 glm_dev_resid <- residuals(glm_fit, type = "deviance")
 
 # Combine into a new dataframe
-GRR_glm_fit_df <- GRR_vs_DRW %>%
+GRR_glm_fit_df <- glm_data %>%
   mutate(
-    fitted_prob = glm_predictions,
-    fitted_sig_genes = fitted_prob * module_size,
-    residual = sig_genes - fitted_sig_genes,
+    fitted_GRR = glm_predictions,
+    GRR_resid = abs(GRR) - fitted_GRR,
     dev_resid = glm_dev_resid
   )
 ```
 
 ```{r}
-ggplot(GRR_glm_fit_df, aes(x = drw_zscore, y = wGRR)) +
+ggplot(GRR_glm_fit_df, aes(x = drw_zscore, y = abs(GRR))) +
   geom_point(alpha = 0.5, size = 0.8) +
-  geom_line(aes(y = fitted_sig_genes / module_size), color = "blue", size = 1) +
+  geom_line(aes(y = fitted_GRR), color = "blue", size = 1) +
   theme_minimal() +
   labs(
-    title = "Binomial GLM fit: wGRR vs wDRW in PHH",
-    x = "Weighted Directed Random Walk score (wDRW)",
-    y = "Weighted Gene Response Rate (wGRR)"
+    title = "Binomial GLM fit: Abs GRR vs DRW in PHH",
+    x = "Weighted Directed Random Walk Score (wDRW)",
+    y = "Absolute Gene Response Rate (GRR)"
   )
 ```
 
+Visually, there are less outlying points using the DRW score than using the abs Eigengene score.
+
 ```{r}
 summary(glm_fit)
-```
-
-```{r}
-deviance(glm_fit) / df.residual(glm_fit)
-```
-
-```{r}
-1 - (glm_fit$deviance / glm_fit$null.deviance)
 ```
 
 ### significant outliers 
@@ -874,32 +860,22 @@ For each module and sample, we compare the observed number of significant genes 
 ```{r}
 GRR_glm_fit_df <- GRR_glm_fit_df %>%
   mutate(
-    se_fit = sqrt(module_size * fitted_prob * (1 - fitted_prob)),
-    z_score = (sig_genes - fitted_sig_genes) / se_fit,
+    se_fit = sqrt(fitted_GRR * (1 - fitted_GRR) / module_size),
+    z_score = GRR_resid / se_fit,
     p_value = 2 * pnorm(-abs(z_score))  # two-sided test
   )
 ```
 
 ```{r}
 GRR_glm_fit_df <- GRR_glm_fit_df %>%
-  mutate(outlier = p_value < 0.05)
-```
-
-```{r}
-GRR_glm_fit_df <- GRR_glm_fit_df %>%
   mutate(
+    outlier = p_value < 0.05,
     outlier_direction = case_when(
       outlier & z_score > 0 ~ "Above fit",
       outlier & z_score < 0 ~ "Below fit",
       TRUE ~ "Not significant"
     )
   )
-```
-
-```{r}
-GRR_glm_fit_df <- GRR_glm_fit_df %>% 
-  mutate(module_number = module_nr, sample_id = condition_id) %>% 
-  select(-module_nr, - condition_id)
 ```
 
 ```{r}
@@ -912,20 +888,229 @@ GRR_glm_fit_df <- GRR_glm_fit_df %>%
 sum(GRR_glm_fit_df$outlier, na.rm = TRUE)
 ```
 
+There are 4914 outliers found. This is less than the eg score.
 
 ```{r}
-ggplot(GRR_glm_fit_df, aes(x = drw_zscore, y = wGRR)) +
+total_modules_all <- GRR_glm_fit_df %>%
+  filter(module_number != 0) %>%
+  summarise(n = n_distinct(module_number)) %>%
+  pull(n) # for normalization
+```
+
+
+```{r}
+total_conditions_all <- GRR_glm_fit_df %>%
+  filter(module_number != 0) %>%
+  summarise(n = n_distinct(sample_id)) %>%
+  pull(n) # for normalization
+```
+
+
+```{r}
+# Make a summarizing df for comparing with other datasets and scoring algorithms
+outlier_density <- GRR_glm_fit_df %>%
+  filter(outlier, module_number != 0) %>%
+  group_by(outlier_direction) %>%
+  summarise(
+    total_outliers = n(),
+    .groups = "drop"
+  ) %>%
+  bind_rows(
+    tibble(
+      outlier_direction = "Total",
+      total_outliers = sum(.$total_outliers)
+    )
+  ) %>%
+  mutate(
+    total_modules = total_modules_all,
+    total_conditions = total_conditions_all,
+    density = total_outliers / (total_modules * total_conditions)
+  )
+```
+
+```{r}
+print(outlier_density)
+```
+
+```{r}
+ggplot(GRR_glm_fit_df, aes(x = abs(drw_zscore), y = abs(GRR))) +
   geom_point(aes(color = outlier), alpha = 0.6, size = 0.9) +
-  geom_line(aes(y = fitted_sig_genes / module_size), color = "blue", size = 1) +
+  geom_line(aes(y = fitted_GRR), color = "blue", size = 1) +
   scale_color_manual(values = c("black", "red")) +
   theme_minimal() +
   labs(
-    title = "wGRR vs wDRW Score with Significant Outliers in PHH",
+    title = "abs(GRR) vs abs(DRW) Score with Significant Outliers in PHH",
+    x = "Absolute Weighted Directed Random Walk Score (wDRW)",
+    y = "Absolute Gene Response Rate (GRR)"
+  )
+```
+
+```{r}
+ggplot(GRR_glm_fit_df, aes(x = drw_zscore, y = abs(GRR))) +
+  geom_point(aes(color = outlier), alpha = 0.6, size = 0.9) +
+  geom_line(aes(y = fitted_GRR), color = "blue", size = 1) +
+  scale_color_manual(values = c("black", "red")) +
+  theme_minimal() +
+  labs(
+    title = "abs(GRR) vs DRW Score with Significant Outliers in PHH",
+    x = "Weighted Directed Random Walk Score (wDRW)",
+    y = "Absolute Gene Response Rate (GRR)"
+  )
+```
+
+This fit shows, visually, less over and under quantification compared to the EG. especially the high EG scores (overquantification) with 0 gene responses are not present. Overall, this scoring shows less randomness than the eg scoring method on the proposed evaluation metric.
+
+## Binomial Generalized Linear Model (GLM): wGRR vs DRW
+
+```{r}
+glm_data <- GRR_vs_DRW %>%
+  filter(!is.na(wGRR), !is.na(drw_zscore)) # This filtering was performed as the function was first tested on a subset, but the filtering is irrelevant for the whole dataset as there are no NAs
+```
+
+
+```{r}
+glm_fit <- glm(
+  abs(wGRR) ~ abs(drw_zscore),
+  data = glm_data,
+  family = quasibinomial(link = "logit") # quasibinomial as the wGRR is a proportion multiplied by a continuous variable, the cor_eg.
+)
+```
+
+```{r}
+# Make predictions and residuals
+glm_predictions <- predict(glm_fit, type = "response")
+glm_dev_resid <- residuals(glm_fit, type = "deviance")
+
+# Combine into a new dataframe
+GRR_glm_fit_df <- glm_data %>%
+  mutate(
+    fitted_wGRR = glm_predictions,
+    wGRR_resid = abs(wGRR) - fitted_wGRR,
+    dev_resid = glm_dev_resid
+  )
+```
+
+```{r}
+ggplot(GRR_glm_fit_df, aes(x = drw_zscore, y = abs(wGRR))) +
+  geom_point(alpha = 0.5, size = 0.8) +
+  geom_line(aes(y = fitted_wGRR), color = "blue", size = 1) +
+  theme_minimal() +
+  labs(
+    title = "Binomial GLM fit: wGRR vs DRW in PHH",
     x = "Weighted Directed Random Walk Score (wDRW)",
     y = "Weighted Gene Response Rate (wGRR)"
   )
 ```
-This fit shows, visually, less over and under quantification compared to the EG. especially the high EG scores (overquantification) with 0 gene responses are not present. However, the fit still shows some underquantification
+
+Visually, there are less outlying points using the DRW score than using the abs Eigengene score.
+
+```{r}
+summary(glm_fit)
+```
+
+### significant outliers 
+
+For each module and sample, we compare the observed number of significant genes to the expected number based on the binomial GLM, and calculate a two-sided z-score and p-value using the binomial standard error. By doing this, the significant outlying modules from the glm fit are identified.
+
+```{r}
+GRR_glm_fit_df <- GRR_glm_fit_df %>%
+  mutate(
+    se_fit = sqrt(fitted_wGRR * (1 - fitted_wGRR) / module_size),
+    z_score = wGRR_resid / se_fit,
+    p_value = 2 * pnorm(-abs(z_score))  # two-sided test
+  )
+```
+
+```{r}
+GRR_glm_fit_df <- GRR_glm_fit_df %>%
+  mutate(
+    outlier = p_value < 0.05,
+    outlier_direction = case_when(
+      outlier & z_score > 0 ~ "Above fit",
+      outlier & z_score < 0 ~ "Below fit",
+      TRUE ~ "Not significant"
+    )
+  )
+```
+
+```{r}
+GRR_glm_fit_df <- GRR_glm_fit_df %>%
+  mutate(module = paste0("hPHH_", module_number)) %>%
+  left_join(module_annotation, by = "module")
+```
+
+```{r}
+sum(GRR_glm_fit_df$outlier, na.rm = TRUE)
+```
+There are 6998 outliers found. This is less than the eg score.
+
+```{r}
+total_modules_all <- GRR_glm_fit_df %>%
+  filter(module_number != 0) %>%
+  summarise(n = n_distinct(module_number)) %>%
+  pull(n) # for normalization
+```
+
+
+```{r}
+total_conditions_all <- GRR_glm_fit_df %>%
+  filter(module_number != 0) %>%
+  summarise(n = n_distinct(sample_id)) %>%
+  pull(n) # for normalization
+```
+
+
+```{r}
+# Make a summarizing df for comparing with other datasets and scoring algorithms
+outlier_density <- GRR_glm_fit_df %>%
+  filter(outlier, module_number != 0) %>%
+  group_by(outlier_direction) %>%
+  summarise(
+    total_outliers = n(),
+    .groups = "drop"
+  ) %>%
+  bind_rows(
+    tibble(
+      outlier_direction = "Total",
+      total_outliers = sum(.$total_outliers)
+    )
+  ) %>%
+  mutate(
+    total_modules = total_modules_all,
+    total_conditions = total_conditions_all,
+    density = total_outliers / (total_modules * total_conditions)
+  )
+```
+
+```{r}
+print(outlier_density)
+```
+
+```{r}
+ggplot(GRR_glm_fit_df, aes(x = abs(drw_zscore), y = abs(wGRR))) +
+  geom_point(aes(color = outlier), alpha = 0.6, size = 0.9) +
+  geom_line(aes(y = fitted_wGRR), color = "blue", size = 1) +
+  scale_color_manual(values = c("black", "red")) +
+  theme_minimal() +
+  labs(
+    title = "abs(wGRR) vs abs(DRW) Score with Significant Outliers in PHH",
+    x = "Absolute Weighted Directed Random Walk Score (wDRW)",
+    y = "Absolute Weighted Gene Response Rate (wGRR)"
+  )
+```
+
+```{r}
+ggplot(GRR_glm_fit_df, aes(x = drw_zscore, y = abs(wGRR))) +
+  geom_point(aes(color = outlier), alpha = 0.6, size = 0.9) +
+  geom_line(aes(y = fitted_wGRR), color = "blue", size = 1) +
+  scale_color_manual(values = c("black", "red")) +
+  theme_minimal() +
+  labs(
+    title = "abs(wGRR) vs DRW Score with Significant Outliers in PHH",
+    x = "Weighted Directed Random Walk Score (wDRW)",
+    y = "Absolute Weighted Gene Response Rate (wGRR)"
+  )
+```
 
 ## Modules and conditions with most significant outliers'
 
@@ -1153,52 +1338,6 @@ GRR_glm_fit_df %>%
     x = "Condition (sample_id)",
     y = "Number of outliers below fit"
   )
-```
-
-# Outliers per number of modules * number of samples: density of outliers for comparison with other datasets and techniques.
-
-To compare this with PHH the number of outliers will be compared relative to the total modules and conditions. Also, to have a more arbitrary number to compare with the other topology-based scoring methods
-
-```{r}
-total_modules_all <- GRR_glm_fit_df %>%
-  filter(module_number != 0) %>%
-  summarise(n = n_distinct(module_number)) %>%
-  pull(n) # for normalization
-```
-
-
-```{r}
-total_conditions_all <- GRR_glm_fit_df %>%
-  filter(module_number != 0) %>%
-  summarise(n = n_distinct(sample_id)) %>%
-  pull(n) # for normalization
-```
-
-
-```{r}
-# Make a summarizing df for comparing with other datasets and scoring algorithms
-outlier_density <- GRR_glm_fit_df %>%
-  filter(outlier, module_number != 0) %>%
-  group_by(outlier_direction) %>%
-  summarise(
-    total_outliers = n(),
-    .groups = "drop"
-  ) %>%
-  bind_rows(
-    tibble(
-      outlier_direction = "Total",
-      total_outliers = sum(.$total_outliers)
-    )
-  ) %>%
-  mutate(
-    total_modules = total_modules_all,
-    total_conditions = total_conditions_all,
-    density = total_outliers / (total_modules * total_conditions)
-  )
-```
-
-```{r}
-print(outlier_density)
 ```
 
 # Conclusion
