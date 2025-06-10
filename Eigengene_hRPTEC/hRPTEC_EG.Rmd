@@ -2,17 +2,27 @@
 title: "RPTEC_EG"
 author: "Sem"
 date: "2025-05-09"
-output: html_document
+output:
+  html_document:
+    toc: true
+    toc_float: 
+      collapsed: false
+      smooth_scroll: true
+      position: left
+    toc_depth: 1
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+# Libraries
+
 ```{r}
 library(ggplot2)
 library(dplyr)
 ```
+# RPTEC Data
 
 ```{r}
 data_dir <- data_dir <- "C:/Users/semde/Documents/BOO_Scripts/Data/RPTEC_TXG-MAPr"
@@ -24,13 +34,16 @@ module_annotation <- readRDS(file.path(data_dir, "module_annotation.rds"))
 
 # Introduction
 
-The eigengene scoring method will be evaluated in the Renal Proximal Tubule Epithelial Cell (RPTEC) dataset from the Leiden Academic Center for Drug Research (LACDR). It will be evaluated on the weighted Gene Response Rate (wGRR) metric, which is proposed as an evaluation metric for the topological activation of every unique combination of condition and module. The wGRR presented as the following formula:
+The eigengene scoring method will be evaluated in the Renal Proximal Tubule Epithelial Cell (RPTEC) dataset from the Leiden Academic Center for Drug Research (LACDR). It will be evaluated on the Gene Response Rate and  Weighted Gene Response Rate (wGRR) metric, which is proposed as an evaluation metric for the topological activation of every unique combination of condition and module. The GRR and wGRR are presented as the following formulas:
 
 $$
-wGRR = \frac{ \displaystyle \sum_{i}^{n} \left( |\log_2 \mathrm{FC}_i| > 1.0 \land p_{\mathrm{adj},i} < 0.05 \right) \cdot \mathrm{cor\_eg}_i }{ n }
+\mathrm{GRR}(M_j) = \frac{ \displaystyle \sum_{i=1}^{n_j} \left( |\log_2 \mathrm{FC}_i| > 1.0 \,\wedge\, p_{\mathrm{adj},i} < 0.05 \right)} { n_j }
 $$
 
-Here, the binary outcome (0 or 1) for the significance filter is weighted by the cor_eg of each gene. And the total weighted significant genes are divided by the total genes in the module.
+$$
+\mathrm{wGRR}(M_j) = \frac{ \displaystyle \sum_{i=1}^{n_j} \left( |\log_2 \mathrm{FC}_i| > 1.0 \,\wedge\, p_{\mathrm{adj},i} < 0.05 \right) \cdot \mathrm{median(TOM)}_i }{ \sum_{i=1}^{n_j} \mathrm{median(TOM)}_i }
+$$
+The GRR represents the proportion of significantly expressed genes in a module (abs log2fc > 1.0 and padj < 0.05) and the wGRR weighs this proportion by the median(TOM) of a gene within a module.
 
 # Distribution of Log2FC and adjusted p-value
 
@@ -44,11 +57,12 @@ ggplot(expression_long, aes(x = log2fc)) +
   geom_density(color = "darkblue") +
   theme_minimal() + labs(title = "Distribution of Log2FC in RPTEC dataset")
 ```
+The log2fc shows a normal distribution in the RPTEC dataset
 
 ```{r}
 sum(abs(expression_long$log2fc) > 1) # total log2fc > 1 ("biologically significant" fold change)
 ```
-
+There are a total of 653992 genes with a significant log2fc.
 
 ## p-adjusted
 
@@ -60,10 +74,12 @@ ggplot(expression_long, aes(x = padj)) +
   labs(title = "Distribution of adjusted p-values in RPTEC dataset")
 ```
 
+The padj values are not normally distributed, as expected due to it being a pvalue.
+
 ```{r}
 sum(is.na(expression_long$padj)) # Na values in padj
 ```
-Something did not went well with the padj values. Will adjust them myself with same method as pHH according to the TXG-MAPr paper (Benjamini Hochberg)
+The pvalues are not adjusted yet. Will adjust them myself with same method as pHH according to the TXG-MAPr paper (Benjamini Hochberg)
 
 ```{r}
 expression_long$padj <- p.adjust(expression_long$pvalue, method = "BH")
@@ -72,12 +88,12 @@ expression_long$padj <- p.adjust(expression_long$pvalue, method = "BH")
 ```{r}
 sum(is.na(expression_long$padj))
 ```
+Now there are still some NA values in the padj column. According to Giulia, this is because they are not significant.
 
 ```{r}
 sum(is.na(expression_long$padj) & is.na(expression_long$log2fc))
 ```
-
-Still a lot of NA values but there is log2FC data, because these p-values are not significant.
+To prove Giulias point. There are no log2fc NA values AND adj pvalues that are NA. 
 
 ```{r}
 # Total number of NA genes per condition
@@ -91,8 +107,7 @@ expression_long %>%
 # Total NA values for the modules with eg_score
 sum(is.na(eg_score$eg_score))
 ```
-
-ALl the modules still have eg_scores, even if there are missing values for padj and log2fc.
+ALl the modules still have eg_scores, even if there are missing values for padj and log2fc. So we will proceed with the analysis
 
 ## Significant genes
 
@@ -101,6 +116,7 @@ Total statistically significant genes (padj)
 ```{r}
 sum(expression_long$padj <  0.05, na.rm = TRUE)
 ```
+There are 232911 genes in the RPTEC dataset that have significant padj values.
 
 ## Both Log2FC and padj significant
 
@@ -109,16 +125,12 @@ total biologically significant genes (log2fc > 1 and padj < 0.05)
 ```{r}
 sum(abs(expression_long$log2fc) > 1 & expression_long$padj < 0.05, na.rm = TRUE)
 ```
+There are 184290 genes that are biologically and statistically significant in the RPTEC dataset.
 
-# Gene Response Rate
+## Gene Response Rate
 
-**This section is not relevant anymore, because now the wGRR is used and not the GRR. However, it is still included in the .Rmd file, if it is decided to use the GRR metric in the future**
+**The GRR calculation here is not relevant anymore, because the calculation was changed and calculated in the hRPTEC_DRW.Rmd file. But the chunks are still included. Because some parts are used in the fitting **
 
-The proposed Gene Response Rate reflects the total of significant genes (abs(Log2FC) > 1.0 & padj < 0.05) in a module with size n. This will be plotted against the eigengene score to assess this scoring method.
-
-$$
-GRR = \frac{ \displaystyle \sum_{i=1}^{n} \left( |\log_2 \mathrm{FC}_i| > 1.0 \ \land \ p_{\mathrm{adj},i} < 0.05 \right) }{ n }
-$$
 
 ## Merge module_definition with expression_long
 
@@ -191,43 +203,9 @@ GRR_vs_eg_score <- sig_count %>%
 ```
 
 
-## Density plots of GRR and EG score
-
-```{r}
-ggplot(GRR_vs_eg_score, aes(x = GRR)) +
-  geom_histogram(aes(y = ..density..), bins = 50, fill = "green", alpha = 0.6) +
-  geom_density(color = "black") +
-  theme_minimal() + labs(title = "Distribution of Gene Response Rate in RPTEC dataset")
-```
-
-Like expected, the GRR shows a logaritmic distribution due to the count data nature.
-
-```{r}
-ggplot(GRR_vs_eg_score, aes(x = eg_score)) +
-  geom_histogram(aes(y = ..density..), bins = 50, fill = "red", alpha = 0.6) +
-  geom_density(color = "black") +
-  theme_minimal() + labs(title = "Distribution of Eigengene Score in RPTEC dataset")
-```
-
-Eigengene shows a normal distribution, as expected due to the PCA use.
-
-```{r}
-ggplot(GRR_vs_eg_score, aes(x = abs_eg_score)) +
-  geom_histogram(aes(y = ..density..), bins = 50, fill = "red", alpha = 0.6) +
-  geom_density(color = "black") +
-  theme_minimal() + labs(title = "Distribution of Absolute Eigengene Score in RPTEC dataset")
-```
-
-Abs eigengene shows a log distribution, as expected due to the abs transformation
-
-## wGRR
+# wGRR and (correct) GRR
 
 It was later decided that the wGRR metric was more representative of topological activation than the GRR metric. This metric was calculated in the hRPTEC_DRW.rmd file and loaded in to visualize it againt the abs_eg_score. The wGRR improves the GRR metric by weighting the genes by their cor_egs, which is used as a measure for their topological importance:
-
-$$
-wGRR = \frac{ \displaystyle \sum_{i}^{n} \left( |\log_2 \mathrm{FC}_i| > 1.0 \land p_{\mathrm{adj},i} < 0.05 \right) \cdot \mathrm{cor\_eg}_i }{ n }
-$$
-
 
 ```{r}
 GRR_vs_DRW   <- readRDS(file.path(data_dir, "GRR_vs_DRW_cor_eg_RPTEC.rds"))
@@ -237,7 +215,6 @@ GRR_vs_DRW   <- readRDS(file.path(data_dir, "GRR_vs_DRW_cor_eg_RPTEC.rds"))
 cols_from_DRW <- GRR_vs_DRW %>%
   select(sample_id, module_number, wGRR, GRR)
 ```
-
 
 ```{r}
 GRR_vs_eg_score <- GRR_vs_eg_score %>%
@@ -261,7 +238,9 @@ ggplot(GRR_vs_eg_score, aes(x = abs(wGRR))) +
   theme_minimal() + labs(title = "Distribution of Weighted Gene Response Rate (wGRR) in RPTEC dataset")
 ```
 
-Both abs(wGRR) and abs(GRR) log distributed
+Both abs(wGRR) and abs(GRR) log distributed, as expected due to abs transformation
+
+# Fitting the wGRR and GRR vs EG score using binomial GLMs
 
 ## Visualize GRR and wGRR vs DRW score with a linear fit
 
@@ -295,15 +274,15 @@ The linear fit does not fit the data well visually, so a binomial glm will be fi
 
 ```{r}
 glm_data <- GRR_vs_eg_score %>%
-  filter(!is.na(GRR), !is.na(eg_score)) # This filtering was performed as the function was first tested on a subset, but the filtering is irrelevant for the whole dataset as there are no NAs
+  filter(!is.na(GRR), !is.na(eg_score)) # This filtering was performed as the function was first tested on a subset, but the filtering is irrelevant for the whole dataset as there are no NAs anymore
 ```
 
 
 ```{r}
 glm_fit <- glm(
-  abs(GRR) ~ abs(eg_score), # absolute because of binomial
+  abs(GRR) ~ abs(eg_score), # absolute because of binomial fit
   data = glm_data,
-  family = quasibinomial(link = "logit") # quasibinomial as the wGRR is a proportion multiplied by a continuous variable, the cor_eg.
+  family = quasibinomial(link = "logit") # quasibinomial as the GRR is a proportion
 )
 ```
 
@@ -316,7 +295,7 @@ glm_dev_resid <- residuals(glm_fit, type = "deviance")
 GRR_glm_fit_df <- glm_data %>%
   mutate(
     fitted_GRR = glm_predictions,
-    GRR_resid = abs(GRR) - fitted_GRR,
+    GRR_resid = abs(GRR) - fitted_GRR, # Calculating the resid for outlier calculation
     dev_resid = glm_dev_resid
   )
 ```
@@ -333,11 +312,12 @@ ggplot(GRR_glm_fit_df, aes(x = eg_score, y = abs(GRR))) +
   )
 ```
 
-Lots of weird values with high scores and low GRR
+Binomial fit seems a good fit visually. Lots of weird values with high EG scores and low GRR
 
 ```{r}
 summary(glm_fit)
 ```
+Statistically it is also a good fit.
 
 ### significant outliers 
 
@@ -373,7 +353,7 @@ GRR_glm_fit_df <- GRR_glm_fit_df %>%
 ```{r}
 sum(GRR_glm_fit_df$outlier, na.rm = TRUE)
 ```
-There are 8862 outliers found.
+There are 8862 outliers found from the GRR fit
 
 
 ```{r}
@@ -418,6 +398,8 @@ outlier_density <- GRR_glm_fit_df %>%
 print(outlier_density)
 ```
 
+Above shows the density of the outliers. n_outliers / (n_conditions * n_modules)
+
 ```{r}
 ggplot(GRR_glm_fit_df, aes(x = abs(eg_score), y = abs(GRR))) +
   geom_point(aes(color = outlier), alpha = 0.6, size = 0.9) +
@@ -436,13 +418,15 @@ ggplot(GRR_glm_fit_df, aes(x = eg_score, y = abs(GRR))) +
   geom_point(aes(color = outlier), alpha = 0.6, size = 0.9) +
   geom_line(aes(y = fitted_GRR), color = "blue", size = 1) +
   scale_color_manual(values = c("black", "red")) +
-  theme_minimal() +
+  theme_minimal() + theme(plot.title = element_text(hjust = 0.5, face = "bold")) +
+  guides(color = guide_legend(override.aes = list(size = 2))) +
   labs(
-    title = "abs(GRR) vs EG Score with Significant Outliers in RPTEC",
+    title = "Eigengene (RPTEC)",
     x = "Eigengene Score (EG)",
     y = "Absolute Gene Response Rate (GRR)"
   )
 ```
+
 
 ## Binomial Generalized Linear Model (GLM): wGRR vs DRW
 
@@ -456,7 +440,7 @@ glm_data <- GRR_vs_DRW %>%
 glm_fit <- glm(
   abs(wGRR) ~ abs(eg_score),
   data = glm_data,
-  family = quasibinomial(link = "logit") # quasibinomial as the wGRR is a proportion multiplied by a continuous variable, the cor_eg.
+  family = quasibinomial(link = "logit") # quasibinomial as the wGRR is a proportion multiplied by a continuous variable, the median(TOM)
 )
 ```
 
@@ -486,11 +470,12 @@ ggplot(GRR_glm_fit_df, aes(x = eg_score, y = abs(wGRR))) +
   )
 ```
 
-Visually, there are less outlying points using the DRW score than using the abs Eigengene score.
+Some weird outlying values with0 EG scores and high wGRR and high EG scores with low wGRR. The fit seems good visually.
 
 ```{r}
 summary(glm_fit)
 ```
+Statistically the binomial glm fit is good as well.
 
 ### significant outliers 
 
@@ -526,13 +511,13 @@ GRR_glm_fit_df <- GRR_glm_fit_df %>%
 ```{r}
 sum(GRR_glm_fit_df$outlier, na.rm = TRUE)
 ```
-There are 9675 outliers found.
+There are 9675 outliers found from the wGRR binomial fit in the RPTEC dataset.
 
 ```{r}
 ggplot(GRR_glm_fit_df, aes(x = abs(eg_score), y = abs(wGRR))) +
   geom_point(aes(color = outlier), alpha = 0.6, size = 0.9) +
   geom_line(aes(y = fitted_wGRR), color = "blue", size = 1) +
-  scale_color_manual(values = c("black", "red")) +
+  scale_color_manual(values = c("black", "red")) + 
   theme_minimal() +
   labs(
     title = "abs(wGRR) vs abs(EG) Score with Significant Outliers in RPTEC",
@@ -546,15 +531,16 @@ ggplot(GRR_glm_fit_df, aes(x = eg_score, y = abs(wGRR))) +
   geom_point(aes(color = outlier), alpha = 0.6, size = 0.9) +
   geom_line(aes(y = fitted_wGRR), color = "blue", size = 1) +
   scale_color_manual(values = c("black", "red")) +
-  theme_minimal() +
+  theme_minimal() + theme(plot.title = element_text(hjust = 0.5, face = "bold")) +
+  guides(color = guide_legend(override.aes = list(size = 2))) +
   labs(
-    title = "abs(wGRR) vs EG Score with Significant Outliers in RPTEC",
+    title = "Eigengene (RPTEC)",
     x = "Eigengene Score (EG)",
     y = "Absolute Weighted Gene Response Rate (wGRR)"
   )
 ```
 
-## Modules and conditions with most significant outliers'
+# Modules and conditions with most significant outliers'
 
 Based on the binomial GLM fit, we will now find the modules and conditions with the most significant outliers
 
@@ -783,48 +769,6 @@ GRR_glm_fit_df %>%
   )
 ```
 
-# Outliers per number of modules * number of samples: density of outliers for comparison with other datasets and techniques.
+# Conclusion
 
-To compare this with PHH the number of outliers will be compared relative to the total modules and conditions. Also, to have a more arbitrary number to compare with the other topology-based scoring methods
-
-```{r}
-total_modules_all <- GRR_glm_fit_df %>%
-  filter(module_number != 0) %>%
-  summarise(n = n_distinct(module_number)) %>%
-  pull(n) # for normalization
-```
-
-```{r}
-total_conditions_all <- GRR_glm_fit_df %>%
-  filter(module_number != 0) %>%
-  summarise(n = n_distinct(sample_id)) %>%
-  pull(n) # for normalization
-```
-
-```{r}
-# Making a summarizing df for comparing with other datasets and scoring algorithms
-outlier_density <- GRR_glm_fit_df %>%
-  filter(outlier, module_number != 0) %>%
-  group_by(outlier_direction) %>%
-  summarise(
-    total_outliers = n(),
-    .groups = "drop"
-  ) %>%
-  bind_rows(
-    tibble(
-      outlier_direction = "Total",
-      total_outliers = sum(.$total_outliers)
-    )
-  ) %>%
-  mutate(
-    total_modules = total_modules_all,
-    total_conditions = total_conditions_all,
-    density = total_outliers / (total_modules * total_conditions)
-  )
-```
-
-```{r}
-print(outlier_density)
-```
-
-This shows the total outliers above and below the GLM fit. This is normalized to the total number of combinations of modules and samples to gain the density of the outliers. This is proposed as a quantification for the robustness of EG scoring on the wGRR metric. These results will be shown in a stacked bar plot to compare with the other scoring methods and datasets.
+The Eigengene score shows improveable performance on the GRR and wGRR metrics in the RPTEC dataset. There are lots of low EG scores with high GRR and wGRR points and there are some high EG scores with low GRR and wGRR points. The aim is to improve this using the Weighted Directed Random Walk algorithm, which will be assessed in the hRPTEC_wDRW.Rmd file.

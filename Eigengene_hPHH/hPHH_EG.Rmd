@@ -2,17 +2,28 @@
 title: "PHH_EG"
 author: "Sem"
 date: "2025-05-06"
-output: html_document
+output:
+  html_document:
+    toc: true
+    toc_float: 
+      collapsed: false
+      smooth_scroll: true
+      position: left
+    toc_depth: 1
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+## Libraries
+
 ```{r}
 library(ggplot2)
 library(dplyr)
 ```
+
+## PHH Data
 
 ```{r}
 data_dir <- "C:/Users/semde/Documents/BOO_Scripts/Data/PHH_TXG-MAPr"
@@ -24,35 +35,16 @@ module_annotation <- readRDS(file.path(data_dir, "module_annotation.rds"))
 
 # Introduction
 
-The eigengene scoring method will be evaluated in the Primary Human Hepatocyte (PHH) dataset from the TXG-MAPr tool. It will be evaluated on the weighted Gene Response Rate (wGRR) metric, which is proposed as an evaluation metric for the topological activation of every unique combination of condition and module. The wGRR is presented as the following formula:
-
-
-$$
-GRR(M_j) = 
-\frac{
-  \displaystyle \sum_{i = 1}^{n_j}
-  \left( 
-    \left| \log_2 \mathrm{FC}_i \right| > 1.0 \land p_{\mathrm{adj},i} < 0.05 
-  \right)
-  \cdot 
-  \mathrm{sign} \left( \log_2 \mathrm{FC}_i \right)
-}{
-  \displaystyle n_j
-}
-$$
-
+The eigengene scoring method will be evaluated in the Primary Human Hepatocyte (PHH) dataset from the TXG-MAPr tool. It will be evaluated on the Gene Response Rate and  Weighted Gene Response Rate (wGRR) metric, which is proposed as an evaluation metric for the topological activation of every unique combination of condition and module. The GRR and wGRR are presented as the following formulas:
 
 $$
-wGRR(M_j) = \sum_{i = 1}^{n_j}
-\left( 
-  \left| \log_2 \mathrm{FC}_i \right| > 1.0 \land p_{\mathrm{adj},i} < 0.05 
-\right)
-\cdot 
-\frac{ \mathrm{median(TOM)}_i }{ \sum_{i=1}^{n_j} \mathrm{median(TOM)} }
-\cdot 
-\mathrm{sign} \left( \log_2 \mathrm{FC}_i \right)
+\mathrm{GRR}(M_j) = \frac{ \displaystyle \sum_{i=1}^{n_j} \left( |\log_2 \mathrm{FC}_i| > 1.0 \,\wedge\, p_{\mathrm{adj},i} < 0.05 \right)} { n_j }
 $$
-Here, the binary outcome (0 or 1) for the significance filter is weighted by the cor_eg of each gene. And the total weighted significant genes are divided by the total genes in the module.
+
+$$
+\mathrm{wGRR}(M_j) = \frac{ \displaystyle \sum_{i=1}^{n_j} \left( |\log_2 \mathrm{FC}_i| > 1.0 \,\wedge\, p_{\mathrm{adj},i} < 0.05 \right) \cdot \mathrm{median(TOM)}_i }{ \sum_{i=1}^{n_j} \mathrm{median(TOM)}_i }
+$$
+The GRR represents the proportion of significantly expressed genes in a module (abs log2fc > 1.0 and padj < 0.05) and the wGRR weighs this proportion by the median(TOM) of a gene within a module.
 
 # Distribution of Log2FC and adjusted p-value
 
@@ -66,11 +58,12 @@ ggplot(expression_long, aes(x = log2fc)) +
   geom_density(color = "darkblue") +
   theme_minimal() + labs(title = "Distribution of Log2FC in PHH dataset")
 ```
+Normally distributed visually
 
 ```{r}
 sum(abs(expression_long$log2fc) > 1)
 ```
-
+77639 genes with sig log2fc
 
 ## p-adjusted
 
@@ -81,10 +74,12 @@ ggplot(expression_long, aes(x = padj)) +
   theme_minimal() +
   labs(title = "Distribution of adjusted p-values in PHH dataset")
 ```
+Not normally distributed, as expected
 
 ```{r}
 sum(expression_long$padj <  0.05)
 ```
+674354 genes with sig padj
 
 ## Both Log2FC and padj significant
 
@@ -93,27 +88,13 @@ How many significant genes in the PHH dataset
 ```{r}
 sum(abs(expression_long$log2fc) > 1 & expression_long$padj < 0.05)
 ```
+76111 genes with both log2fc and padj significant
 
 # Gene Response Rate (GRR)
 
-**This section is not relevant anymore, because now the wGRR is used and not the GRR. However, it is still included in the .Rmd file, if it is decided to use the GRR metric in the future**
+Here the Gene Response Rate (GRR) will be calculated.
 
-The proposed Gene Response Rate reflects the total of significant genes (abs(Log2FC) > 1.0 & padj < 0.05) in a module with size n. This will be plotted against the eigengene score to assess this scoring method.
-
-$$
-GRR = \frac{ \displaystyle \sum_{i=1}^{n} \left( |\log_2 \mathrm{FC}_i| > 1.0 \ \land \ p_{\mathrm{adj},i} < 0.05 \right) }{ n }
-$$
-
-$$
-A_{M_j} \;=\;
-\mathrm{if}\,\bigl[\,
-\mathrm{median}\bigl(\mathrm{TOM}(A)\bigr)
->
-\mathrm{median}\bigl(\mathrm{TOM}(B)\bigr)
-\,\bigr]
-\;\mathrm{then}\;
-A \leftarrow B \cdot \mathrm{TOM}
-$$
+The proposed GRR reflects the total of significant genes (abs(Log2FC) > 1.0 & padj < 0.05) in a module with size n. This will be plotted against the eigengene score to assess this scoring method.
 
 ## Merge module_definition with expression_long
 
@@ -174,9 +155,11 @@ GRR_vs_eg_score <- sig_count %>%
   inner_join(eg_score, by = c("module_number", "sample_id"))
 ```
 
-# Weighted Gene Response Rate (wGRR)
+# Weighted Gene Response Rate (wGRR) and (correct) GRR calculation
 
 ### Median TOM
+
+Here the median TOM weighted by the Sum of the TOMs (median relative TOM) for the genes within a module are calculated for use in the wGRR calculation
 
 ```{r}
 TOM   <- readRDS(file.path(data_dir, "TOM_PHH.rds"))
@@ -186,6 +169,7 @@ TOM   <- readRDS(file.path(data_dir, "TOM_PHH.rds"))
 dim(TOM)
 head(TOM[, 1:5])
 ```
+This function calculates the median TOM and the relative median TOM
 
 ```{r}
 get_module_relative_tom <- function(TOM, gene_module_df) {
@@ -219,12 +203,16 @@ get_module_relative_tom <- function(TOM, gene_module_df) {
 tom_weights <- get_module_relative_tom(TOM, expression_with_module)
 ```
 
+Check if calc was succesful:
+
 ```{r}
 nrow(
   expression_with_module %>%
     distinct(entrez_id, module_number)
 ) == nrow(tom_weights)
 ```
+Same number of rows
+
 ```{r}
 # Join with expression
 expression_with_module <- expression_with_module %>%
@@ -272,6 +260,7 @@ GRR_vs_eg_score <- GRR_vs_eg_score %>%
 ```{r}
 sum(is.na(GRR_vs_eg_score$wGRR))
 ```
+No NA values in wGRR
 
 ```{r}
 min(GRR_vs_eg_score$wGRR)
@@ -279,6 +268,7 @@ min(GRR_vs_eg_score$wGRR)
 ```{r}
 max(GRR_vs_eg_score$wGRR)
 ```
+Reach of -1 to 1 as intended.
 
 ```{r}
 #saveRDS(GRR_vs_eg_score, file = "GRR_vs_eg_score_PHH.rds")
@@ -301,6 +291,7 @@ ggplot(GRR_vs_eg_score, aes(x = abs(GRR))) +
   geom_density(color = "black") +
   theme_minimal() + labs(title = "Distribution of Abs Gene Response Rate in PHH dataset")
 ```
+Both abs GRR and abs wGRR log distributed, as expected due to Abs transformation.
 
 ```{r}
 ggplot(GRR_vs_eg_score, aes(x = eg_score)) +
@@ -309,7 +300,9 @@ ggplot(GRR_vs_eg_score, aes(x = eg_score)) +
   theme_minimal() + labs(title = "Distribution of Eigengene Score in PHH dataset")
 ```
 
-Eigengene shows a normal distribution, as expected due to the PCA use. Abs GRR and wGRR show a log distribution, as expected due to the abs transformation.
+Eigengene shows a normal distribution, as expected due to the PCA use.
+
+# Fitting GRR and wGRR vs EG score using Binomial GLMs
 
 ## Visualize GRR and wGRR vs DRW score with a linear fit
 
@@ -327,8 +320,6 @@ ggplot(GRR_vs_eg_score, aes(x = eg_score, y = abs(GRR))) +
   )
 ```
 
-The linear fit does not follow the trend of the wGRR vs EG, as expected due to the logarithmic distribution of the wGRR. Next we will try to fit a different, logarthmic fit. To detect significant outliers.
-
 ### wGRR
 
 ```{r}
@@ -342,6 +333,7 @@ ggplot(GRR_vs_eg_score, aes(x = eg_score, y = abs(wGRR))) +
     y = "Weighted Gene Response Rate (wGRR)"
   )
 ```
+The linear fit does not follow the trend of the (w)GRR vs EG, as expected due to the logarithmic distribution of the (w)GRR. Next we will try to fit a binomal fit
 
 ## Fitting using Binomial Generalized Linear Model (GLM)
 
@@ -359,7 +351,7 @@ glm_data <- GRR_vs_eg_score %>%
 glm_fit <- glm(
   abs(GRR) ~ abs(eg_score), # absolute because of binomial
   data = glm_data,
-  family = quasibinomial(link = "logit") # quasibinomial as the wGRR is a proportion multiplied by a continuous variable, the cor_eg.
+  family = quasibinomial(link = "logit") # quasibinomial as the GRR is a proportion
 )
 ```
 
@@ -389,11 +381,12 @@ ggplot(GRR_glm_fit_df, aes(x = eg_score, y = abs(GRR))) +
   )
 ```
 
-A lot of points with high scores and low gene response
+A lot of points with high scores and low gene response and low scores with high GRR. good fit visually
 
 ```{r}
 summary(glm_fit)
 ```
+Good fit statistically.
 
 ### significant outliers 
 
@@ -429,7 +422,7 @@ GRR_glm_fit_df <- GRR_glm_fit_df %>%
 ```{r}
 sum(GRR_glm_fit_df$outlier, na.rm = TRUE)
 ```
-There are 10464 outliers found from the binomial fit.
+There are 10464 outliers found from the binomial fit in PHH for the GRR
 
 
 ```{r}
@@ -474,6 +467,8 @@ outlier_density <- GRR_glm_fit_df %>%
 print(outlier_density)
 ```
 
+Above shows the density of the outliers: number of outliers / (total conditions * total modules).
+
 ```{r}
 ggplot(GRR_glm_fit_df, aes(x = abs(eg_score), y = abs(GRR))) +
   geom_point(aes(color = outlier), alpha = 0.6, size = 0.9) +
@@ -492,9 +487,10 @@ ggplot(GRR_glm_fit_df, aes(x = eg_score, y = abs(GRR))) +
   geom_point(aes(color = outlier), alpha = 0.6, size = 0.9) +
   geom_line(aes(y = fitted_GRR), color = "blue", size = 1) +
   scale_color_manual(values = c("black", "red")) +
-  theme_minimal() +
+  theme_minimal() + theme(plot.title = element_text(hjust = 0.5, face = "bold")) +
+  guides(color = guide_legend(override.aes = list(size = 2))) +
   labs(
-    title = "abs(GRR) vs EG Score with Significant Outliers in PHH",
+    title = "Eigengene (PHH)",
     x = "Eigengene Score (EG)",
     y = "Absolute Gene Response Rate (GRR)"
   )
@@ -510,9 +506,9 @@ glm_data <- GRR_vs_eg_score %>%
 
 ```{r}
 glm_fit <- glm(
-  abs(wGRR) ~ abs(eg_score), # Absolute bec
+  abs(wGRR) ~ abs(eg_score), # Absolute because of binomial fit
   data = glm_data,
-  family = quasibinomial(link = "logit") # quasibinomial as the wGRR is a proportion multiplied by a continuous variable, the cor_eg.
+  family = quasibinomial(link = "logit") # quasibinomial as the wGRR is a proportion multiplied by a continuous variable, the median TOM
 )
 ```
 
@@ -546,6 +542,8 @@ ggplot(GRR_glm_fit_df, aes(x = eg_score, y = abs(wGRR))) +
 ```{r}
 summary(glm_fit)
 ```
+
+Visually and statistically a good fit 
 
 ### significant outliers 
 
@@ -581,7 +579,7 @@ GRR_glm_fit_df <- GRR_glm_fit_df %>%
 ```{r}
 sum(GRR_glm_fit_df$outlier, na.rm = TRUE)
 ```
-There are 10654 outliers found.
+There are 10654 outliers found from the binomial fit of wGRR vs EG.
 
 ```{r}
 total_modules_all <- GRR_glm_fit_df %>%
@@ -625,6 +623,8 @@ outlier_density <- GRR_glm_fit_df %>%
 print(outlier_density)
 ```
 
+Above shows the density of the outliers: number of outliers / (total conditions * total modules).
+
 ```{r}
 ggplot(GRR_glm_fit_df, aes(x = abs(eg_score), y = abs(wGRR))) +
   geom_point(aes(color = outlier), alpha = 0.6, size = 0.9) +
@@ -643,15 +643,16 @@ ggplot(GRR_glm_fit_df, aes(x = eg_score, y = abs(wGRR))) +
   geom_point(aes(color = outlier), alpha = 0.6, size = 0.9) +
   geom_line(aes(y = fitted_wGRR), color = "blue", size = 1) +
   scale_color_manual(values = c("black", "red")) +
-  theme_minimal() +
+  theme_minimal() + theme(plot.title = element_text(hjust = 0.5, face = "bold")) +
+  guides(color = guide_legend(override.aes = list(size = 2))) +
   labs(
-    title = "abs(wGRR) vs EG Score with Significant Outliers in PHH",
+    title = "Eigengene (PHH)",
     x = "Eigengene Score (EG)",
     y = "Absolute Weighted Gene Response Rate (wGRR)"
   )
 ```
 
-## Modules and conditions with most significant outliers'
+# Modules and conditions with most significant outliers'
 
 Based on the wGRR binomial GLM fit, we will now find the modules and conditions with the most significant outliers
 
@@ -879,4 +880,6 @@ GRR_glm_fit_df %>%
     y = "Number of outliers below fit"
   )
 ```
+# Conclusion
 
+The Eigengene score shows improveable performance on the GRR and wGRR metrics in the PHH dataset. There are lots of low EG scores with high GRR and wGRR points and there are some high EG scores with low GRR and wGRR points. The aim is to improve this using the Weighted Directed Random Walk algorithm, which will be assessed in the hPHH_wDRW.Rmd file.

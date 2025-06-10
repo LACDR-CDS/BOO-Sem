@@ -21,37 +21,16 @@ library(tidyr)
 library(purrr)
 library(circlize)
 library(tools)
-library(ggh4x)       # voor facet_nested()
-library(ggnewscale)  # voor twee “fill” schalen
+library(ggh4x)
+library(ggnewscale)  
 library(patchwork) 
 ```
 
 # Introduction
 
-This .Rmd file is used to create nice plots for the report and presentation
+This .Rmd file is used to create nice bar plots of the wGRR and GRR outliers for the report/presentation.
 
-## PHH data
-
-```{r}
-data_dir <- "C:/Users/semde/Documents/BOO_Scripts/Data/PHH_TXG-MAPr"
-module_enrichment_PHH   <- readRDS(file.path(data_dir, "module_enrichment.rds"))
-drw_scores_PHH <- readRDS(file.path(data_dir, "drw_scores_PHH_directed.rds"))
-eg_scores_PHH <- readRDS(file.path(data_dir, "eg_score.rds"))
-#sdrw_scores_PHH <- readRDS(file.path(data_dir, "sdrw_scores_PHH_directed.rds")) # not finished yet
-
-```
-
-## RPTEC data
-
-```{r}
-data_dir <- "C:/Users/semde/Documents/BOO_Scripts/Data/RPTEC_TXG-MAPr"
-module_enrichment_RPTEC   <- readRDS(file.path(data_dir, "module_enrichment.rds"))
-drw_scores_RPTEC <- readRDS(file.path(data_dir, "drw_scores_RPTEC_r0.7.rds"))
-eg_scores_RPTEC <- readRDS(file.path(data_dir, "eg_score.rds"))
-#sdrw_scores_RPTEC <- readRDS(file.path(data_dir, "sdrw_scores_RPTEC_directed.rds"))
-```
-
-# wGRR Outlier Summary
+# GRR Outlier Summary
 
 ## PHH
 
@@ -59,7 +38,7 @@ eg_scores_RPTEC <- readRDS(file.path(data_dir, "eg_score.rds"))
 df_phh <- data.frame(
   Algorithm = c("Eigengene", "Eigengene", "wDRW", "wDRW"),
   Outlier_Direction = c("Underquantification", "Overquantification", "Underquantification", "Overquantification"),
-  density = c(0.030444465, 0.001257616, 0.028, 0.000676)
+  density = c(0.025138979, 0.002800933, 0.015732221, 0.001957182)
 )
 ```
 
@@ -69,18 +48,83 @@ df_phh$Outlier_Direction <- factor(df_phh$Outlier_Direction, levels = c("Overqua
 ```
 
 
-```{r}
-darkblue_palette <- c("Overquantification" = "#1f78b4",
-                      "Underquantification" = "#0c2c54") 
+## RPTEC
 
-# Plot met custom palette
-ggplot(df_phh, aes(x = Algorithm, y = density, fill = Outlier_Direction)) +
-  geom_bar(stat = "identity") +
-  labs(y = "Outlier Density", x = "Scoring Algorithm", fill = "Outlier Direction") +
-  ggtitle("Outlier density above and below binomial fit (wGRR vs scoring method) in PHH") +
-  theme_minimal() +
-  scale_fill_manual(values = darkblue_palette)
+```{r}
+df_rptec <- data.frame(
+  Algorithm = c("Eigengene", "Eigengene", "wDRW", "wDRW"),
+  Outlier_Direction = c("Underquantification", "Overquantification", "Underquantification", "Overquantification"),
+  density = c(0.085245538, 0.037551269, 0.032258065, 0.035833056)
+)
 ```
+
+```{r}
+# Zorg dat 'Below fit' onder 'Above fit' komt in stacking
+df_rptec$Outlier_Direction <- factor(df_rptec$Outlier_Direction, levels = c("Overquantification", "Underquantification"))
+```
+
+## Combining and plotting
+
+```{r}
+df_phh$Dataset <- "PHH"
+df_rptec$Dataset <- "RPTEC"
+```
+
+
+```{r}
+df_combined <- rbind(df_phh, df_rptec)
+```
+
+```{r}
+dark_palette <- c(
+  "Overquantification" = "#1E8449",  # donkergroen
+  "Underquantification" = "#7D3C1F"  # donkerbruin
+) 
+```
+
+```{r}
+# Plot met facet_grid
+ggplot(df_combined, aes(x = Algorithm, y = density, fill = Outlier_Direction)) +
+  geom_bar(stat = "identity") +
+  labs(
+    y = "Outlier Density", 
+    x = "Scoring Algorithm", 
+    fill = "Outlier Direction"
+  ) +
+  ggtitle("Gene Response Rate (GRR)") +
+  facet_grid(~ Dataset) +
+  theme_minimal(base_size = 14) +
+  scale_fill_manual(values = dark_palette) +
+  theme(
+    strip.text = element_text(size = 16, face = "bold"), # facet titles
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12),
+    axis.title = element_text(size = 14, face = "bold"),
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 12),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank()
+  )
+```
+
+
+# wGRR Outlier Summary
+
+## PHH
+
+```{r}
+df_phh <- data.frame(
+  Algorithm = c("Eigengene", "Eigengene", "wDRW", "wDRW"),
+  Outlier_Direction = c("Underquantification", "Overquantification", "Underquantification", "Overquantification"),
+  density = c(0.024861288, 0.003585942, 0.015211552, 0.002485862)
+)
+```
+
+```{r}
+# Zorg dat 'Below fit' onder 'Above fit' komt in stacking
+df_phh$Outlier_Direction <- factor(df_phh$Outlier_Direction, levels = c("Overquantification", "Underquantification"))
+```
+
 
 ## RPTEC
 
@@ -88,323 +132,50 @@ ggplot(df_phh, aes(x = Algorithm, y = density, fill = Outlier_Direction)) +
 df_rptec <- data.frame(
   Algorithm = c("Eigengene", "Eigengene", "wDRW", "wDRW"),
   Outlier_Direction = c("Underquantification", "Overquantification", "Underquantification", "Overquantification"),
-  density = c(0.11816872, 0.02527436, 0.0802, 0.0187)
+  density = c(0.089014522, 0.045047667, 0.055550937, 0.041417249)
 )
 ```
 
-```{r}
-# Zorg dat 'Below fit' onder 'Above fit' komt in stacking
-df_rptec$Outlier_Direction <- factor(df_rptec$Outlier_Direction, levels = c("Overquantification", "Underquantification"))
+## Combining and plotting
 
-# Plot
-ggplot(df_rptec, aes(x = Algorithm, y = density, fill = Outlier_Direction)) +
+```{r}
+df_phh$Dataset <- "PHH"
+df_rptec$Dataset <- "RPTEC"
+```
+
+
+```{r}
+df_combined <- rbind(df_phh, df_rptec)
+```
+
+```{r}
+darkblue_palette <- c("Overquantification" = "#1f78b4",
+                      "Underquantification" = "#0c2c54") 
+```
+
+```{r}
+# Plot met facet_grid
+ggplot(df_combined, aes(x = Algorithm, y = density, fill = Outlier_Direction)) +
   geom_bar(stat = "identity") +
-  labs(y = "Outlier Density", x = "Scoring Algorithm", fill = "Outlier Direction") +
-  ggtitle("Outlier density above and below binomial fit (wGRR vs scoring method) in RPTEC") +
-  theme_minimal() + scale_fill_brewer(palette = "Set2")
-```
-
-
-# Heatmap
-
-## PHH 
-
-Strip for module numbers and conditions
-
-```{r}
-eg_scores_PHH <- eg_scores_PHH %>%
-  mutate(chemical = str_extract(sample_id, "(?<=TG_HPHH_SINGLE_)[^_]+")) %>% 
-  select(abs_eg_score, chemical, module_number)
-```
-
-### drw_score df
-
-```{r}
-drw_scores_PHH <- drw_scores_PHH %>%
-  mutate(chemical = str_extract(condition_id, "(?<=TG_HPHH_SINGLE_)[^_]+")) %>% 
-  mutate(module_number=module_nr) %>%
-  select(chemical, drw_zscore, module_number)
-```
-
-## RPTEC
-
-Strip for module numbers and conditions
-
-### eg_score df
-
-Strip for module numbers
-
-```{r}
-eg_scores_RPTEC_clean <- eg_scores_RPTEC %>%
-  mutate(
-    chemical = str_extract(sample_id, "(?<=LU_HRPTECTERT1_SINGLE_)[^_]+"),
-    time = factor(str_extract(sample_id, "_T[12]") %>% str_remove("_")),
-    concentration = factor(str_extract(sample_id, "C[0-9]+"))
-  ) %>%
-  select(eg_score, chemical, time, concentration, module_number)
-```
-
-### drw_score df
-
-```{r}
-drw_scores_RPTEC_clean <- drw_scores_RPTEC %>%
-  mutate(
-    chemical = str_extract(condition_id, "(?<=LU_HRPTECTERT1_SINGLE_)[^_]+"),
-    base_string = substr(condition_id, 1, nchar(condition_id) - 3),
-    
-    time = substr(base_string, nchar(base_string) - 1, nchar(base_string)),
-    time = factor(time, levels = c("T1", "T2", "T3")),
-    
-    # Zet om naar factor
-    concentration = factor(str_extract(condition_id, "C[0-9]+")),
-    module_number = module_nr
-  ) %>%
-  select(chemical, time, concentration, drw_zscore, module_number)
-```
-
-```{r}
-summary(drw_scores_RPTEC_clean)
-```
-
-
-### Preprocessing Heatmap
-
-```{r}
-selected_chemicals <- c("DOXORUBICIN", "MITOMYCINC", "LEADACETATE", "GENTAMYCIN", 
-                        "DICHLOROVINYLCYSTEINE", "CYCLOSPORINA", "OMEPRAZOL", "CADMIUMDICHLORIDE")
-
-selected_modules <- c(12, 263, 35, 260, 33, 40, 109, 162, 211, 235,
-                      15, 44, 46, 254, 16, 19, 134, 240, 288, 50, 56)
-```
-
-```{r}
-compound_labels <- c(
-  "DOXORUBICIN" = "Doxorubicin",
-  "MITOMYCINC" = "Mitomycin C",
-  "LEADACETATE" = "Lead(II) acetate",
-  "GENTAMYCIN" = "Gentamycin",
-  "DICHLOROVINYLCYSTEINE" = "DCVC",
-  "CYCLOSPORINA" = "Cyclosporin A",
-  "OMEPRAZOL" = "Omeprazole",
-  "CADMIUMDICHLORIDE" = "Cadmium chloride"
-)
-```
-
-```{r}
-module_groups <- tibble::tibble(
-  module_number = c(12, 263, 35, 260, 33, 40, 109, 162, 211, 235,
-                    15, 44, 46, 254, 16, 19, 134, 240, 288, 50, 56),
-  KE_group = c(
-    "Cell Cycle", "Cell Cycle",
-    "DNA Damage", "DNA Damage",
-    "Endoplasmic Reticulum", "Endoplasmic Reticulum", "Endoplasmic Reticulum", "Endoplasmic Reticulum", "Endoplasmic Reticulum", "Endoplasmic Reticulum", 
-    "Inflammation", "Inflammation", "Inflammation", "Inflammation",
-    "Lysosome",
-    "Mitochondria", "Mitochondria", "Mitochondria", "Mitochondria", 
-    "Oxidative Stress", "Oxidative Stress"          
-  )
-)
-```
-
-```{r}
-drw_filtered_plot <- drw_scores_RPTEC_clean %>%
-  filter(chemical %in% selected_chemicals,
-         module_number %in% selected_modules) %>%
-  left_join(module_groups, by = "module_number") %>%
-  mutate(
-    chemical_label = factor(compound_labels[chemical], levels = compound_labels),
-    time = factor(time, 
-              levels = c("T2", "T3"), 
-              labels = c("8hr", "24hr")),
-    concentration = factor(concentration, levels = c("C1", "C2", "C3")),
-    module_number = factor(module_number, levels = rev(sort(unique(module_number)))),  # zodat boven = laag
-    KE_group = factor(KE_group, levels = c("Cell Cycle", "DNA Damage", "Endoplasmic Reticulum",
-                                           "Inflammation", "Lysosome", "Mitochondria", "Oxidative Stress"))
-  )
-```
-
-
-```{r}
-ke_colors <- c(
-  "Cell Cycle" = "#F6E04D",
-  "DNA Damage" = "#E78AC3",
-  "Endoplasmic Reticulum" = "#E41A1C",
-  "Inflammation" = "#67001F",
-  "Lysosome" = "#FF7F00",
-  "Mitochondria" = "#4DA3D9",
-  "Oxidative Stress" = "#4DAF4A"
-)
-```
-
-```{r}
-module_order <- module_groups %>%
-  arrange(factor(KE_group, levels = names(ke_colors)), module_number) %>%
-  pull(module_number)
-```
-
-
-```{r}
-# Pas toe op drw_filtered_plot
-drw_filtered_plot <- drw_filtered_plot %>%
-  mutate(
-    module_number = factor(module_number, levels = rev(module_order)),  # y-as van boven naar beneden
-    KE_group = factor(KE_group, levels = names(ke_colors))
-  )
-```
-
-### Plot Heatmap
-
-```{r}
-font_family_choice <- "sans"
-
-# Bepaal waar elke KE‐groep scheidingslijnen moet krijgen:
-y_lines_data <- drw_filtered_plot %>%
-  distinct(module_number, KE_group, module_number_factor) %>%
-  arrange(module_number_factor) %>%
-  mutate(
-    next_KE_group    = lead(KE_group),
-    is_boundary_below = (KE_group != next_KE_group) & !is.na(next_KE_group),
-    yintercept_pos   = as.numeric(module_number_factor) + 0.5
-  ) %>%
-  filter(is_boundary_below)
-
-# 1) Bouw de hoofd‐heatmap (p_heatmap)
-p_heatmap <- ggplot(drw_filtered_plot, aes(x = concentration, y = module_number_factor)) +
-  # A) Scheidingslijnen tussen KE‐groepen
-  geom_hline(
-    data = y_lines_data,
-    aes(yintercept = yintercept_pos),
-    color = "grey50", linewidth = 0.5
+  labs(
+    y = "Outlier Density", 
+    x = "Scoring Algorithm", 
+    fill = "Outlier Direction"
   ) +
-  # B) DRW‐zscore tiles
-  geom_tile(
-    aes(fill = drw_zscore),
-    color = "white", linewidth = 0.25,
-    width = 0.95, height = 0.95
-  ) +
-  # C) Kleurschaal blauw → wit → rood
-  scale_fill_gradient2(
-    low = "#2166AC", mid = "white", high = "#B2182B",
-    midpoint = 0,
-    name = "DRW z-score",
-    limits = c(
-      -max(abs(drw_filtered_plot$drw_zscore), na.rm = TRUE),
-       max(abs(drw_filtered_plot$drw_zscore), na.rm = TRUE)
-    ),
-    guide = guide_colorbar(
-      barwidth = unit(5, "lines"), barheight = unit(0.5, "lines"),
-      title.position = "top", title.hjust = 0.5,
-      label.position = "bottom"
-    )
-  ) +
-  # D) Facetten: bovenste strip = time, daaronder = compoundnaam
-  facet_nested(
-    ~ chemical_label + time,
-    switch = "x",
-    nest_line = element_line(color = "grey70", linewidth = 0.5),
-    strip = strip_nested(
-      text_x = elem_list_text(
-        size   = c(9, 7.5),        # compound groter, time iets kleiner
-        face   = c("bold", "plain"),
-        family = font_family_choice
-      ),
-      background_x = elem_list_rect(
-        fill  = c("grey90", "grey95"),
-        color = "grey70"
-      ),
-      by_layer_x = TRUE
-    )
-  ) +
-  # E) Zet C1–C3 (concentratie) bovenaan
-  scale_x_discrete(position = "top", expand = c(0, 0)) +
+  ggtitle("Weighted Gene Response Rate (wGRR)") +
+  facet_grid(~ Dataset) +
+  theme_minimal(base_size = 14) +
+  scale_fill_manual(values = darkblue_palette) +
   theme(
-    axis.text.x.bottom   = element_blank(),
-    axis.ticks.x.bottom  = element_blank()
-  ) +
-  # F) Y‐as enkel rechts (module labels komen uit KE-strip, dus verberg tijdelijk)
-  scale_y_discrete(position = "right", drop = FALSE, expand = c(0, 0)) +
-  theme(
-    axis.text.y.left   = element_blank(),
-    axis.ticks.y.left  = element_blank(),
-    axis.text.y.right  = element_blank(),
-    axis.ticks.y.right = element_blank()
-  ) +
-  labs(x = NULL, y = NULL) +
-  theme_minimal(base_size = 9, base_family = font_family_choice) +
-  theme(
-    strip.placement      = "outside",
-    axis.text.x.top     = element_text(size = 7, family = font_family_choice, margin = margin(b = 1)),
-    axis.ticks.x.top     = element_line(linewidth = 0.2),
-    panel.grid           = element_blank(),
-    panel.spacing.x      = unit(0.05, "lines"),
-    plot.margin          = margin(t = 5.5, r = 20, b = 5.5, l = 5.5, unit = "pt"),
-    legend.position       = "bottom",
-    legend.box            = "horizontal",
-    legend.justification   = "center",
-    legend.box.just       = "center"
+    strip.text = element_text(size = 16, face = "bold"), # facet titles
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12),
+    axis.title = element_text(size = 14, face = "bold"),
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 12),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank()
   )
-
-# 2) Maak de KE‐kleurstrip (p_ke_strip) (éénmalig, rechts naast alle modules)
-ke_strip_data_plot <- drw_filtered_plot %>%
-  distinct(module_number_factor, KE_group) %>%
-  mutate(KE_group = factor(KE_group, levels = levels(drw_filtered_plot$KE_group)))
-
-# Zet x‐positie voor KE‐strip op 4 (C1–C3 zijn x = 1,2,3)
-ke_x_pos <- length(levels(drw_filtered_plot$concentration)) + 1
-
-p_ke_strip <- ggplot(ke_strip_data_plot, aes(x = ke_x_pos, y = module_number_factor)) +
-  geom_tile(aes(fill = KE_group), width = 1, height = 0.95) +
-  scale_fill_manual(
-    name   = "KE group",
-    values = ke_colors,
-    labels = publication_ke_order,
-    guide  = guide_legend(
-      override.aes    = list(linetype = 0),
-      ncol            = 2,
-      title.position  = "top",
-      title.hjust     = 0.5
-    )
-  ) +
-  scale_y_discrete(
-    limits = levels(drw_filtered_plot$module_number_factor),
-    drop   = FALSE
-  ) +
-  theme_void(base_family = font_family_choice) +
-  theme(
-    axis.text.y       = element_blank(),
-    axis.ticks.y      = element_blank(),
-    panel.background  = element_blank(),
-    plot.background   = element_blank(),
-    plot.margin       = margin(t = 5.5, r = 5.5, b = 5.5, l = 0.5, unit = "pt"),
-    legend.position   = "bottom",
-    legend.box        = "horizontal",
-    legend.justification = "center",
-    legend.box.just   = "center"
-  ) +
-  coord_cartesian(clip = "off")
-
-# 3) Combineer beide plots met patchwork
-combined_plot <- p_heatmap + p_ke_strip +
-  plot_layout(
-    widths = c(0.92, 0.08),  # heatmap groep 92%, KE‐strip 8%
-    guides = "collect"
-  ) & theme(
-    legend.position       = "bottom",
-    legend.box            = "horizontal",
-    legend.justification   = "center",
-    legend.box.just       = "center",
-    legend.title          = element_text(size = 9, family = font_family_choice, face = "bold"),
-    legend.text           = element_text(size = 8, family = font_family_choice),
-    legend.key.size       = unit(0.7, "lines"),
-    legend.spacing.x      = unit(0.1, "cm"),
-    legend.spacing.y      = unit(0.1, "cm"),
-    legend.box.spacing    = unit(0.3, "cm"),
-    legend.margin         = margin(t = 0, unit = "pt")
-  )
-
-# Print de gecombineerde plot in de RStudio Viewer
-print(combined_plot)
 ```
-
 
 

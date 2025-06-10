@@ -681,7 +681,7 @@ with_progress({
 
 
 ```{r}
-drw_scores          <- readRDS(file.path(data_dir, "drw_scores_PHH_directed.rds")) # reading the drw_scores
+drw_scores          <- readRDS(file.path(data_dir, "drw_scores_PHH_r0.7.rds")) # reading the drw_scores
 ```
 
 
@@ -702,14 +702,14 @@ No NA values
 The DRW scores will be normalized for their module_size.
 
 ```{r}
-drw_scores <- drw_scores %>%
-  left_join(
-    GRR_vs_eg_score %>% select(sample_id, module_number, module_size),
-    by = c("condition_id" = "sample_id", "module_nr" = "module_number")
-  ) %>%
-  mutate(
-    drw_zscore = drw_score / module_size
-  )
+#drw_scores <- drw_scores %>%
+ # left_join(
+    #GRR_vs_eg_score %>% select(sample_id, module_number, module_size),
+   # by = c("condition_id" = "sample_id", "module_nr" = "module_number")
+  #) %>%
+  #mutate(
+   # drw_zscore = drw_score / sqrt(module_size)
+  #)
 ```
 
 ```{r}
@@ -720,8 +720,11 @@ No NA values
 
 
 ```{r}
-#saveRDS(drw_scores, file = "drw_scores_PHH_directed.rds") # saving the drw_scores
+#saveRDS(drw_scores, file = "drw_scores_PHH_r0.7.rds") # saving the drw_scores
 ```
+
+
+
 
 
 # Evaluate the DRW scores on the PHH with the wGRR metric
@@ -880,7 +883,7 @@ GRR_glm_fit_df <- GRR_glm_fit_df %>%
 
 ```{r}
 GRR_glm_fit_df <- GRR_glm_fit_df %>%
-  mutate(module = paste0("hPHH_", module_number)) %>%
+  mutate(module = paste0("hPHH_", module_nr)) %>%
   left_join(module_annotation, by = "module")
 ```
 
@@ -888,20 +891,20 @@ GRR_glm_fit_df <- GRR_glm_fit_df %>%
 sum(GRR_glm_fit_df$outlier, na.rm = TRUE)
 ```
 
-There are 4914 outliers found. This is less than the eg score.
+There are 6625 outliers found. This is less than the eg score.
 
 ```{r}
 total_modules_all <- GRR_glm_fit_df %>%
-  filter(module_number != 0) %>%
-  summarise(n = n_distinct(module_number)) %>%
+  filter(module_nr != 0) %>%
+  summarise(n = n_distinct(module_nr)) %>%
   pull(n) # for normalization
 ```
 
 
 ```{r}
 total_conditions_all <- GRR_glm_fit_df %>%
-  filter(module_number != 0) %>%
-  summarise(n = n_distinct(sample_id)) %>%
+  filter(module_nr != 0) %>%
+  summarise(n = n_distinct(condition_id)) %>%
   pull(n) # for normalization
 ```
 
@@ -909,7 +912,7 @@ total_conditions_all <- GRR_glm_fit_df %>%
 ```{r}
 # Make a summarizing df for comparing with other datasets and scoring algorithms
 outlier_density <- GRR_glm_fit_df %>%
-  filter(outlier, module_number != 0) %>%
+  filter(outlier, module_nr != 0) %>%
   group_by(outlier_direction) %>%
   summarise(
     total_outliers = n(),
@@ -964,7 +967,7 @@ This fit shows, visually, less over and under quantification compared to the EG.
 
 ```{r}
 glm_data <- GRR_vs_DRW %>%
-  filter(!is.na(wGRR), !is.na(drw_zscore)) # This filtering was performed as the function was first tested on a subset, but the filtering is irrelevant for the whole dataset as there are no NAs
+  filter(!is.na(wGRR), !is.na(drw_zscore), abs(wGRR)<=1) # This filtering was performed as the function was first tested on a subset, but the filtering is irrelevant for the whole dataset as there are no NAs. Also there was an error with wGRR because one value is above 1?
 ```
 
 
@@ -1035,27 +1038,27 @@ GRR_glm_fit_df <- GRR_glm_fit_df %>%
 
 ```{r}
 GRR_glm_fit_df <- GRR_glm_fit_df %>%
-  mutate(module = paste0("hPHH_", module_number)) %>%
+  mutate(module = paste0("hPHH_", module_nr)) %>%
   left_join(module_annotation, by = "module")
 ```
 
 ```{r}
 sum(GRR_glm_fit_df$outlier, na.rm = TRUE)
 ```
-There are 6998 outliers found. This is less than the eg score.
+There are 6628 outliers found. This is less than the eg score.
 
 ```{r}
 total_modules_all <- GRR_glm_fit_df %>%
-  filter(module_number != 0) %>%
-  summarise(n = n_distinct(module_number)) %>%
+  filter(module_nr != 0) %>%
+  summarise(n = n_distinct(module_nr)) %>%
   pull(n) # for normalization
 ```
 
 
 ```{r}
 total_conditions_all <- GRR_glm_fit_df %>%
-  filter(module_number != 0) %>%
-  summarise(n = n_distinct(sample_id)) %>%
+  filter(module_nr != 0) %>%
+  summarise(n = n_distinct(condition_id)) %>%
   pull(n) # for normalization
 ```
 
@@ -1063,7 +1066,7 @@ total_conditions_all <- GRR_glm_fit_df %>%
 ```{r}
 # Make a summarizing df for comparing with other datasets and scoring algorithms
 outlier_density <- GRR_glm_fit_df %>%
-  filter(outlier, module_number != 0) %>%
+  filter(outlier, module_nr != 0) %>%
   group_by(outlier_direction) %>%
   summarise(
     total_outliers = n(),
