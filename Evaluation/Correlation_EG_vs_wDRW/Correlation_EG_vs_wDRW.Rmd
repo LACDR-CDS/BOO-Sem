@@ -2,7 +2,14 @@
 title: "Correlation EG vs wDRW"
 author: "Sem"
 date: "2025-06-06"
-output: html_document
+output:
+  html_document:
+    toc: true
+    toc_float: 
+      collapsed: false
+      smooth_scroll: true
+      position: left
+    toc_depth: 1
 ---
 
 ```{r setup, include=FALSE}
@@ -14,12 +21,14 @@ library(ggplot2)
 library(tibble)
 library(dplyr)
 library(patchwork)
+library(dplyr)
+library(tidyverse)
 ```
 
 
 # Introduction
 
-In this .Rmd file, the least and most correlated modules between EG and wDRW in PHH and RPTEC are calculated
+In this .Rmd file, the least and most correlated modules between EG and wDRW in PHH and RPTEC are calculated and plotted using dotplots to visualize both module_size and annotation
 
 ## PHH data
 
@@ -110,7 +119,6 @@ module_correlations_annotated <- module_correlations %>%
 #### Most correlated modules
 
 ```{r}
-# Bekijk result
 module_correlations_annotated %>% 
   head(10) %>% 
   select(-abs_correlation)
@@ -129,7 +137,7 @@ module_correlations_annotated %>%
 
 #### Preparing
 
-**dit aanpassen voor PHH**
+Annotated modules were summarized for annotation in the plot
 
 ```{r}
 top10_df <- tribble(

@@ -2,7 +2,14 @@
 title: "CTD Validation"
 author: "Sem"
 date: "2025-05-22"
-output: html_document
+output:
+  html_document:
+    toc: true
+    toc_float: 
+      collapsed: false
+      smooth_scroll: true
+      position: left
+    toc_depth: 1
 ---
 
 ```{r setup, include=FALSE}
@@ -19,7 +26,7 @@ library(ggplot2)
 
 # Introduction
 
-In this .Rmd file, the top-k scoring modules are identified for different scoring algorithms and conditions. For each compound, the Reactome-based enrichment of these modules is compared to the compound enrichment from the Comparative Toxicogenomics Database(CTD) database. Only Reactome pathways were used for this comparison, as it was the only source shared between the module enrichment results and the CTD data. This analysis serves to evaluate the biological relevance of the proposed module scoring methods. It is assessed if there are matches between the databases (0= no match, 1 = 1 or more match). Then the accuracy for the top-k pathways per scoring method and dataset will be computed to evaluate if DRW based scoring provide more biologically accurate results
+In this .Rmd file, the top-k scoring combination of modules and conditions are identified for different scoring algorithms and conditions. For each compound, the Reactome-based enrichment of these modules is compared to the Reactome compound enrichment from the Comparative Toxicogenomics Database(CTD) database. Only Reactome pathways were used for this comparison, as it was the only source shared between the module enrichment results and the CTD data. This analysis serves to evaluate the biological relevance of the proposed module scoring methods. It is assessed if there are matches between the databases (0= no match, 1 = 1 or more match). Then the accuracy for the top-k combinations of modules and conditions per scoring method and dataset will be computed to evaluate if DRW based scoring provide more biologically accurate results
 
 ## CTD data
 
@@ -31,6 +38,7 @@ CTD_Pathways <- read_csv(
   show_col_types = FALSE
 )
 ```
+First row NA warning, will be fixed later on.
 
 ## PHH data
 
@@ -48,7 +56,6 @@ data_dir <- "C:/Users/semde/Documents/BOO_Scripts/Data/RPTEC_TXG-MAPr"
 module_enrichment_RPTEC   <- readRDS(file.path(data_dir, "module_enrichment.rds"))
 drw_scores_RPTEC <- readRDS(file.path(data_dir, "drw_scores_RPTEC_r0.7.rds"))
 eg_scores_RPTEC <- readRDS(file.path(data_dir, "eg_score.rds"))
-#sdrw_scores_RPTEC <- readRDS(file.path(data_dir, "sdrw_scores_RPTEC_directed.rds"))
 ```
 
 # Preprocessing

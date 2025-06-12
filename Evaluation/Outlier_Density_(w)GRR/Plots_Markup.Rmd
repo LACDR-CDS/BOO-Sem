@@ -1,34 +1,35 @@
 ---
-title: "Eval"
+title: "Plots Markup"
 author: "Sem"
 date: "2025-05-23"
-output: html_document
+output:
+  html_document:
+    toc: true
+    toc_float: 
+      collapsed: false
+      smooth_scroll: true
+      position: left
+    toc_depth: 1
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+## Libraries
+
 ```{r}
 library(data.table)
 library(dplyr)
 library(ggplot2)
-library(colorspace)
-library(ComplexHeatmap)
 library(tibble)
 library(stringr)
 library(tidyr)
-library(purrr)
-library(circlize)
-library(tools)
-library(ggh4x)
-library(ggnewscale)  
-library(patchwork) 
 ```
 
 # Introduction
 
-This .Rmd file is used to create nice bar plots of the wGRR and GRR outliers for the report/presentation.
+This .Rmd file is used to create nice bar plots of the wGRR and GRR outliers for the report/presentation. The outlier density of the GRR and wGRR metrics are formatted into barplots
 
 # GRR Outlier Summary
 
@@ -59,7 +60,7 @@ df_rptec <- data.frame(
 ```
 
 ```{r}
-# Zorg dat 'Below fit' onder 'Above fit' komt in stacking
+# "Below fit" below "Above fit"
 df_rptec$Outlier_Direction <- factor(df_rptec$Outlier_Direction, levels = c("Overquantification", "Underquantification"))
 ```
 
@@ -77,8 +78,8 @@ df_combined <- rbind(df_phh, df_rptec)
 
 ```{r}
 dark_palette <- c(
-  "Overquantification" = "#1E8449",  # donkergroen
-  "Underquantification" = "#7D3C1F"  # donkerbruin
+  "Overquantification" = "#1E8449",  
+  "Underquantification" = "#7D3C1F"  
 ) 
 ```
 
@@ -96,10 +97,11 @@ ggplot(df_combined, aes(x = Algorithm, y = density, fill = Outlier_Direction)) +
   theme_minimal(base_size = 14) +
   scale_fill_manual(values = dark_palette) +
   theme(
+    plot.title = element_text(size = 20, face = "bold"),
     strip.text = element_text(size = 16, face = "bold"), # facet titles
     axis.text.x = element_text(size = 12),
     axis.text.y = element_text(size = 12),
-    axis.title = element_text(size = 14, face = "bold"),
+    axis.title = element_text(size = 14),
     legend.title = element_text(size = 14, face = "bold"),
     legend.text = element_text(size = 12),
     panel.grid.major.x = element_blank(),
@@ -167,10 +169,11 @@ ggplot(df_combined, aes(x = Algorithm, y = density, fill = Outlier_Direction)) +
   theme_minimal(base_size = 14) +
   scale_fill_manual(values = darkblue_palette) +
   theme(
+    plot.title = element_text(size = 20, face = "bold"),
     strip.text = element_text(size = 16, face = "bold"), # facet titles
     axis.text.x = element_text(size = 12),
     axis.text.y = element_text(size = 12),
-    axis.title = element_text(size = 14, face = "bold"),
+    axis.title = element_text(size = 14),
     legend.title = element_text(size = 14, face = "bold"),
     legend.text = element_text(size = 12),
     panel.grid.major.x = element_blank(),

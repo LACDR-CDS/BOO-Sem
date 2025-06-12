@@ -2,12 +2,21 @@
 title: "hPHH_DRW"
 author: "Sem"
 date: "2025-05-10"
-output: html_document
+output:
+  html_document:
+    toc: true
+    toc_float: 
+      collapsed: false
+      smooth_scroll: true
+      position: left
+    toc_depth: 1
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
+
+## Libraries
 
 ```{r}
 library(ggplot2)
@@ -19,6 +28,8 @@ library(progressr)
 library(WGCNA)
 library(tidyr)
 ```
+
+## PHH Data
 
 ```{r}
 data_dir <- "C:/Users/semde/Documents/BOO_Scripts/Data/PHH_TXG-MAPr"
@@ -34,40 +45,39 @@ adj_matrix <- fread(file.path(data_dir, "adj_PHH.txt")) %>%
   column_to_rownames(var = names(.)[1]) %>%
   as.matrix()
 ```
-
 The adj matrix reading gives a warning but reading in went well, so warning is ignored.
 
 # Introduction
 
-In this Rmd file, the 'basic' Directed Random Walk will be performed on the PHH dataset.This involves performing a random walk over the network, where nodes present genes and edges present the directions of the network. The procedures described by (Hui et al, 2024) and (Liu et al, 2013) are followed as much as possible. However, they used predefined (KEGG) pathways and this project used co-expressed modules. So, some things will differ and it will be mentioned where it differs. 
+In this Rmd file, the Weighted Directed Random Walk will be performed on the PHH dataset.This involves performing a random walk over the network, where nodes present genes and edges present the directions of the network. The procedures described by (Hui et al, 2024) and (Liu et al, 2013) are followed as much as possible. However, they used predefined pathways and this project used co-expressed modules. So, some things will differ and it will be mentioned where it differs. 
 
-First, the directions of the network will be constructed based on the correlation eigengenes  in a module, if cor_eg(gene A) > cor_eg(gene B) than A has an edge to B: A->B (represented as 1). This direction will be weighted by the Topological Overlap Matrix (TOM). *The original article uses predefined pathways for this.* Then, the directions will be reversed, because "a web page is important if other pages point to it" and therefore also genes (Liu et al, 2013). Also,an artificial ground node will be used, which is bidirectionally connected to every gene. This is done to make sure that every node is connected and there are no 0-out of degree connections (Liu et al, 2013)
+First, the directions of the network will be constructed based on the median(TOM) values of genes in a module, if media(TOM(gene A)) > median(TOM(gene B)) than A has an edge to B: A->B (represented as 1). This direction will be weighted by the Topological Overlap Matrix (TOM). *The original article uses predefined pathways for this.* Then, the directions will be reversed, because "a web page is important if other pages point to it" and therefore also genes (Liu et al, 2013). Also,an artificial ground node will be used, which is bidirectionally connected to every gene that has no connections to other genes and one directionally connected to every other gene. This is done to make sure that every node is connected and there are no 0-out of degree connections (Liu et al, 2013), making sure that the progation goes well and the walker converges. This results in the Weighted Graph $G$.
 
 After that, the random walker will be performed: 
 
 $$
 W_{t+1} = (1 - r) A_{M_j} \cdot W_t + r W_0
 $$
-Here, the $r$ represents the restart probability, set at 0.7 (Hui et al). This represents the chance to return to the initial weight vector ($W_0$), which represents the "walker score" for each gene: -log10(padj) * abs(Log2FC). *The original article used t-values, but the degrees of freedom are not known. So the walker score is proposed.* The initial weights are only assigned to differentially expressed genes (padj < 0.05).
+Here, the $r$ represents the restart probability, set at 0.7 (Hui et al). This represents the chance to return to the initial weight vector ($W_0$), which represents the initial differential signal for each gene, based on biological and statistical significance: -log10(padj) * abs(Log2FC). *The original article used t-values, but the degrees of freedom are not known. So this score is proposed.*
 
 $$
 W_0(g_i) = -\log_{10} \left( p_{\mathrm{adj}}(g_i) \right) \cdot \left| \log_2 \mathrm{FC}(g_i) \right|
 $$
 
-The $A^T$ represents the row normalized directed TOM. The $W_t$ vector represents the weight of the nodes (genes) at time $t$ and the $W_{t+1}$ vector represents the weight of the nodes (genes) at time $t+1$.
+The $A_{Mj}$ represents the row normalized adjacency matrix of the Graph $G$. The $W_t$ vector represents the weight of the nodes (genes) at time $t$ and the $W_{t+1}$ vector represents the weight of the nodes (genes) at time $t+1$.
 
 The recursive walker will be performed until the L1-norm ,the difference (delta), between $W_t$ and $W_{t+1}$ converges to $10^{–10}$ and this limit, the $W_{∞}$, will be obtained for each gene. The $W_{∞}$ of the ground node will be evenly distributed over the other genes in the module.
 
-Afterwards, the module activty for module $M_j$ will be calculated with the following formula:
+Afterwards, the module activty for module $M_j$ will be calculated using the following formula, only using genes that have a padj < 0.05 and an absolute log2fc greater than 1.0:
 
 $$
 wDRW(M_j) = \frac{ \sum_{i=1}^{n_j} W_\infty(g_i) \cdot \log_2 \mathrm{FC}(g_i) }
 { \sqrt{n_j} \cdot \sqrt{ \sum_{i=1}^{n_j} \left( W_\infty(g_i) \right)^2 } }
 $$
 
-Here, the $W_{∞}$ represents the weight of each gene in the network and log2fc represents the expression value. The sum of all the $W_{∞}$ vector multiplied by the abs log2fc of the genes will be divided by the square root of the sum of the squared $W_{∞}$ vector for each gene. Only genes with a padj value < 0.05 will be used to construct the module activity. The result is an absolute DRW score that represents the network activation of a module.
+Here, the $W_{∞}$ represents the weight of each gene in the network and log2fc represents the (signed) expression value. The sum of all the $W_{∞}$ vector multiplied by the abs log2fc of the genes will be divided by the square root of the sum of the squared $W_{∞}$ vector for each gene. The result is a  wDRW score that represents the activity value of a modelling, integrating both differential expression and network importance of genes.
 
-# Inspecting the adjacency matrix
+## Inspecting the adjacency matrix
 
 First, the adj matrix will be inspected
 
@@ -106,7 +116,6 @@ TOM   <- readRDS(file.path(data_dir, "TOM_PHH.rds"))
 
 
 ```{r}
-dim(TOM)
 head(TOM[, 1:5])
 ```
 
@@ -132,7 +141,7 @@ is.matrix(TOM)
 dim(TOM)
 head(TOM[, 1:5])
 ```
-Interestingly, the TOM of PHH has less genes than RPTEC. Due to microarray vs TempoSeq?
+The TOM now have correct row and column names.
 
 ```{r}
 #saveRDS(TOM, file = "TOM_PHH.rds")
@@ -145,10 +154,6 @@ Checking for NA values
 
 ```{r}
 sum(is.na(expression_long$padj)) # Na values in padj
-```
-
-```{r}
-sum(is.na(expression_long$padj))
 ```
 
 ```{r}
@@ -168,12 +173,13 @@ expression_long$walker_score <- abs(expression_long$log2fc) *
 ```{r}
 sum(is.na(expression_long$walker_score))
 ```
+No NA values
 
 ```{r}
 ggplot(expression_long, aes(x = walker_score)) +
   geom_histogram(aes(y = ..density..), bins = 50, fill = "purple", alpha = 0.6) +
   geom_density(color = "darkblue") +
-  theme_minimal() + labs(title = "Distribution of walker score in PHH dataset")
+  theme_minimal() + labs(title = "Distribution of walker score (W0) in PHH dataset")
 ```
 heavily skewed, but will be normalized in the activity calculation. 
 
@@ -188,11 +194,11 @@ expression_joined <- expression_long %>%
 
 # Constructing the Directed Graph
 
-To construct the Directed Graph for use in the Directed Random Walk. The correlation eigengene scores will be used for genes in the same module. If cor_eg(gene A) > cor_eg(gene B) than A has an edge to B: A->B. Then the directions will be reversed: a webpage is important if other webpages point to it (Hui et al, 2024). This directed Graph will then be weighted by the TOM. Resulting in a weighted Directed Graph.
+To construct the Directed Graph for use in the Directed Random Walk. The Median(TOM) scores will be used for genes in the same module. If median(TOM(gene A)) > median(TOM(gene B)) than A has an edge to B: A->B. Then the directions will be reversed: a webpage is important if other webpages point to it (Hui et al, 2024). This directed Graph will then be weighted by the TOM values. Resulting in a weighted Directed Graph.
 
 ## Correlation EGs
 
-The correlation EG, calculated by LACDR, will be joined with the expression_joined df.
+The correlation EG, calculated by LACDR, will be joined with the expression_joined df. **The cor_egs are not used anymore, but are still included here.**
 
 ```{r}
 expression_cor_eg <- expression_joined %>%
@@ -214,15 +220,15 @@ sum(is.na(expression_cor_eg$cor_eg))
 
 The directed graph will be calculated in the walker loop. 
 
-# Perform the walker on one module to learn how it works practically
+# Perform the walker on one module to learn how it works
 
-Before performing the walker on the whole PHH dataset, it will be tested on one module to assess how it works exactly. Module 200 was selected with condition TG_HPHH_SINGLE_24DINITROPHENOL_T2_C3 (random).
+Before performing the walker on the whole PHH dataset, it will be tested on one module to assess how it works exactly. Module 295 was selected with condition "TG_HPHH_SINGLE_ACETAMINOPHEN_T3_C3".
 
 ## Defining the module and condition for the testing 
 
 ```{r}
-module_nr = 200
-condition_id = "TG_HPHH_SINGLE_24DINITROPHENOL_T2_C3"
+module_nr = 295
+condition_id = "TG_HPHH_SINGLE_ACETAMINOPHEN_T3_C3"
 ```
 
 ## Preparing the data for the condition and module
@@ -247,13 +253,22 @@ TOM_sub <- TOM[genes_in_TOM, genes_in_TOM]
 
 ## Defining the Directed Graph
 
-Again, if cor_eg(A) > cor_eg (B) then edge: A -> B. However, these edges will be reverted: a gene is important if other genes point to it (Liu et al, 2013)
+Again, if median(TOM(A)) > median(TOM(B)) then edge: A -> B. However, these edges will be reverted: a gene is important if other genes point to it (Liu et al, 2013)
 
 ```{r}
-D <- outer(cor_vec, cor_vec, FUN = function(x, y) as.numeric(x < y)) # reverted direction
-rownames(D) <- colnames(D) <- names(cor_vec)
+TOM_medians <- apply(TOM_sub, 1, median, na.rm = TRUE)
+```
 
-# Directed weighted adjacency matrix
+```{r}
+print(TOM_medians)
+```
+
+
+```{r}
+# Directional Graph based on TOM median
+D <- outer(TOM_medians, TOM_medians, FUN = function(x, y) as.numeric(x < y))
+rownames(D) <- colnames(D) <- names(TOM_medians)
+
 W_directed <- D * TOM_sub # Weight the directions with the TOM
 ```
 
@@ -299,22 +314,21 @@ print(A)
 ```{r}
 print(expr_sub)
 ```
-Directions are correctly reversed.
+
 
 ## Defining the initial probability, based on the 'walker score'
 
 The initial probability will be assigned on the earlier calculated walker score.
 
 ```{r}
-# Prepare the initial walker probability (W0) based on the proposed walker score. To 'boost' the significant genes, they only get an innitial weight (W0), this is done to        reduce low DRW scores with high wGRR as this was shown in subset calculations
- 
+# Prepare the initial walker probability (W0) based on the proposed walker score. 
   # Initialize W0 with all genes 0
   W0 <- rep(0, length(rownames(A)))
   names(W0) <- rownames(A)
   
   # Select only the walker score for significant genes
   W0_sig <- expr_sub %>%
-    filter(entrez_id %in% rownames(A), padj < 0.05) %>%
+    filter(entrez_id %in% rownames(A)) %>% # , padj < 0.05 was left out to reduce over estimation
     select(entrez_id, walker_score) %>%
     tibble::deframe()
   
@@ -332,7 +346,7 @@ The initial probability will be assigned on the earlier calculated walker score.
 print(W0) 
 print(expr_sub$walker_score)
 ```
-a higher walker score recieves a higher W0. Non significant genes (padj<0.05) are correctly filtered out
+a higher walker score recieves a higher W0 as intended.
 
 ## Running the walker
 
@@ -439,20 +453,20 @@ ggplot(mean_df, aes(x = iteration, y = mean_score)) +
   theme_minimal()
 ```
 
-Above could be seen how the weight vectors change. It is shown that the W_t vector converges to a stable value, which is above the W0 vector in this module.
+Above could be seen how the weight vectors change. It is shown that the W_t vector converges to a stable value, which is below the W0 vector in this module.
 
 ## Inferring pathway activity
 
-Calculate the activity of the module with the output $W_{∞}$ for the genes. Only genes with an adjusted p-value < 0.05 will be used in the calculation. Also, the abs value of the log2fc is used, because otherwise the activity score will get canceled out.
+Calculate the activity of the module with the output $W_{∞}$ for the genes. Only genes with an adjusted p-value < 0.05 and log2fc > 1.0 will be used in the calculation. 
 
 ```{r}
 activity_df <- expression_joined %>%
   filter(sample_id == condition_id,
          entrez_id %in% names(W_inf),
-         padj < 0.05) %>%
+         padj < 0.05, abs(log2fc) > 1.0) %>%
   select(entrez_id, log2fc) %>%
   mutate(W_inf = W_inf[entrez_id],
-         term = W_inf * abs(log2fc))
+         term = W_inf * log2fc)
 
 numerator <- sum(activity_df$term, na.rm = TRUE)
 denominator <- sqrt(sum(activity_df$W_inf^2, na.rm = TRUE))
@@ -481,7 +495,7 @@ print(
 )
 ```
 
-Above shows the genes that were used in the activity calculation. The connectivity column is the sum of the TOM rows. A higher connectivity resulted in a higher W_inf, as expected. Term is $W_{∞}$ * log2fc. Also higher padj and log2fc resulted in a higher W_inf.  
+Above shows the genes that were used in the activity calculation. The connectivity column is the sum of the TOM rows.
 
 # Perform the walker on the whole RPTEC dataset
 
@@ -514,11 +528,14 @@ compute_drw_score <- function(condition_id, module_nr, expression_df, TOM) {
     return(tibble(condition_id = condition_id, module_nr = module_nr, drw_score = 0))
   } # To ensure not crashing the function
 
-  # Create directed edges: gene B -> gene A if cor(A) > cor(B) as explained above
-  D <- outer(cor_vec, cor_vec, FUN = function(x, y) as.numeric(x < y))
-  rownames(D) <- colnames(D) <- names(cor_vec)
+  # Create directed edges: gene B -> gene A if Median TOM(A) > median TOM(B) as explained above
+  TOM_medians <- apply(TOM_sub, 1, median, na.rm = TRUE)
 
-  # Weight the directed edges with TOM
+  # Directional Graph
+  D <- outer(TOM_medians, TOM_medians, FUN = function(x, y) as.numeric(x < y))
+  rownames(D) <- colnames(D) <- names(TOM_medians)
+
+  # Weight the directed edges by the TOM
   W_directed <- D * TOM_sub
 
   # Add ground node to avoid 0 out of degree nodes
@@ -553,7 +570,7 @@ compute_drw_score <- function(condition_id, module_nr, expression_df, TOM) {
   
   # Select only the walker score for significant genes
   W0_sig <- expr_sub %>%
-    filter(entrez_id %in% rownames(A), padj < 0.05) %>%
+    filter(entrez_id %in% rownames(A)) %>% #, padj < 0.05 
     select(entrez_id, walker_score) %>%
     tibble::deframe()
   
@@ -597,10 +614,11 @@ compute_drw_score <- function(condition_id, module_nr, expression_df, TOM) {
     filter(sample_id == condition_id,
            module_number == module_nr,
            entrez_id %in% names(W_inf),
-           padj < 0.05) %>%
+           padj < 0.05,
+           abs(log2fc) > 1.0) %>%
     select(entrez_id, log2fc) %>%
     mutate(W_inf = W_inf[entrez_id],
-           term = W_inf * abs(log2fc))
+           term = W_inf * log2fc)
 
   numerator <- sum(activity_df$term, na.rm = TRUE)
   denominator <- sqrt(sum(activity_df$W_inf^2, na.rm = TRUE))
@@ -729,11 +747,17 @@ No NA values
 
 # Evaluate the DRW scores on the PHH with the wGRR metric
 
-The DRW scores will be evaluated on the Weighted Gene Response Rate (wGRR) metric to compare DRW to the other scoring methods. The wGRR metric represents the proportion of weighted significant genes in a module, where significant represents log2FC > 1.0 and padj < 0.05 * cor_eg. This metric is therefore proposed as an evaluation metric for topological activation of a module.
+The wDRW scores will be evaluated on the Gene Response Rate and  Weighted Gene Response Rate (wGRR) metric, which is proposed as an evaluation metric for the topological activation of every unique combination of condition and module. The GRR and wGRR are presented as the following formulas:
 
 $$
-wGRR = \frac{ \displaystyle \sum_{i}^{n} \left( |\log_2 \mathrm{FC}_i| > 1.0 \land p_{\mathrm{adj},i} < 0.05 \right) \cdot \mathrm{cor\_eg}_i }{ n }
+\mathrm{GRR}(M_j) = \frac{ \displaystyle \sum_{i=1}^{n_j} \left( |\log_2 \mathrm{FC}_i| > 1.0 \,\wedge\, p_{\mathrm{adj},i} < 0.05 \right)} { n_j }
 $$
+
+$$
+\mathrm{wGRR}(M_j) = \frac{ \displaystyle \sum_{i=1}^{n_j} \left( |\log_2 \mathrm{FC}_i| > 1.0 \,\wedge\, p_{\mathrm{adj},i} < 0.05 \right) \cdot \mathrm{median(TOM)}_i }{ \sum_{i=1}^{n_j} \mathrm{median(TOM)}_i }
+$$
+
+The GRR represents the proportion of significantly expressed genes in a module (abs log2fc > 1.0 and padj < 0.05) and the wGRR weighs this proportion by the median(TOM) of a gene within a module.
 
 ## GRR and wGRR
 
@@ -752,6 +776,7 @@ sum(is.na(GRR_vs_DRW$wGRR))
 
 ```{r}
 min(GRR_vs_DRW$wGRR)
+max(GRR_vs_DRW$wGRR)
 ```
 
 ## Density plots of GRR, wGRR and DRW score
@@ -779,6 +804,8 @@ ggplot(GRR_vs_DRW, aes(x = drw_zscore)) +
   theme_minimal() + labs(title = "Distribution of wDRW score in PHH dataset")
 ```
 Normal distribution
+
+# Fitting wDRW vs GRR and wGRR using binomial GLMs
 
 ## Visualize GRR and wGRR vs DRW score with a linear fit
 
@@ -856,6 +883,8 @@ Visually, there are less outlying points using the DRW score than using the abs 
 summary(glm_fit)
 ```
 
+The fit looks good
+
 ### significant outliers 
 
 For each module and sample, we compare the observed number of significant genes to the expected number based on the binomial GLM, and calculate a two-sided z-score and p-value using the binomial standard error. By doing this, the significant outlying modules from the glm fit are identified.
@@ -891,7 +920,7 @@ GRR_glm_fit_df <- GRR_glm_fit_df %>%
 sum(GRR_glm_fit_df$outlier, na.rm = TRUE)
 ```
 
-There are 6625 outliers found. This is less than the eg score.
+There are 6625 outliers found. This is less than the eg score outliers for GRR
 
 ```{r}
 total_modules_all <- GRR_glm_fit_df %>%
@@ -935,6 +964,8 @@ outlier_density <- GRR_glm_fit_df %>%
 print(outlier_density)
 ```
 
+Above shows the outlier density. n outliers / (n_conditions * n_modules
+
 ```{r}
 ggplot(GRR_glm_fit_df, aes(x = abs(drw_zscore), y = abs(GRR))) +
   geom_point(aes(color = outlier), alpha = 0.6, size = 0.9) +
@@ -953,9 +984,10 @@ ggplot(GRR_glm_fit_df, aes(x = drw_zscore, y = abs(GRR))) +
   geom_point(aes(color = outlier), alpha = 0.6, size = 0.9) +
   geom_line(aes(y = fitted_GRR), color = "blue", size = 1) +
   scale_color_manual(values = c("black", "red")) +
-  theme_minimal() +
+  theme_minimal() + theme(plot.title = element_text(hjust = 0.5, face = "bold")) +
+  guides(color = guide_legend(override.aes = list(size = 2))) +
   labs(
-    title = "abs(GRR) vs DRW Score with Significant Outliers in PHH",
+    title = "wDRW (PHH)",
     x = "Weighted Directed Random Walk Score (wDRW)",
     y = "Absolute Gene Response Rate (GRR)"
   )
@@ -1011,6 +1043,8 @@ Visually, there are less outlying points using the DRW score than using the abs 
 summary(glm_fit)
 ```
 
+Fit is good
+
 ### significant outliers 
 
 For each module and sample, we compare the observed number of significant genes to the expected number based on the binomial GLM, and calculate a two-sided z-score and p-value using the binomial standard error. By doing this, the significant outlying modules from the glm fit are identified.
@@ -1045,6 +1079,7 @@ GRR_glm_fit_df <- GRR_glm_fit_df %>%
 ```{r}
 sum(GRR_glm_fit_df$outlier, na.rm = TRUE)
 ```
+
 There are 6628 outliers found. This is less than the eg score.
 
 ```{r}
@@ -1089,6 +1124,8 @@ outlier_density <- GRR_glm_fit_df %>%
 print(outlier_density)
 ```
 
+Outlier density
+
 ```{r}
 ggplot(GRR_glm_fit_df, aes(x = abs(drw_zscore), y = abs(wGRR))) +
   geom_point(aes(color = outlier), alpha = 0.6, size = 0.9) +
@@ -1107,9 +1144,10 @@ ggplot(GRR_glm_fit_df, aes(x = drw_zscore, y = abs(wGRR))) +
   geom_point(aes(color = outlier), alpha = 0.6, size = 0.9) +
   geom_line(aes(y = fitted_wGRR), color = "blue", size = 1) +
   scale_color_manual(values = c("black", "red")) +
-  theme_minimal() +
+  theme_minimal() + theme(plot.title = element_text(hjust = 0.5, face = "bold")) +
+  guides(color = guide_legend(override.aes = list(size = 2))) +
   labs(
-    title = "abs(wGRR) vs DRW Score with Significant Outliers in PHH",
+    title = "wDRW (PHH)",
     x = "Weighted Directed Random Walk Score (wDRW)",
     y = "Absolute Weighted Gene Response Rate (wGRR)"
   )
@@ -1126,12 +1164,12 @@ significant_outliers_filtered <- GRR_glm_fit_df %>%
 
 ```{r}
 outliers_per_module <- significant_outliers_filtered %>%
-  count(module_number, sort = TRUE)
+  count(module_nr, sort = TRUE)
 ```
 
 ```{r}
 outliers_per_sample <- significant_outliers_filtered %>%
-  count(sample_id, sort = TRUE)
+  count(condition_id, sort = TRUE)
 ```
 
 ```{r}
@@ -1188,7 +1226,7 @@ GRR_glm_fit_df %>%
 #### Outliers above the GLM fit
 
 ```{r}
-threshold <- 50  # Threshold for switching annotation position
+threshold <- 70  # Threshold for switching annotation position
 
 GRR_glm_fit_df %>%
   filter(outlier_direction == "Above fit") %>%
@@ -1285,7 +1323,7 @@ Now, we will assess what conditions have the most outliers. Total, below and abo
 ```{r}
 outliers_per_sample %>%
   top_n(20, n) %>%
-  ggplot(aes(x = reorder(sample_id, n), y = n)) +
+  ggplot(aes(x = reorder(condition_id, n), y = n)) +
   geom_col(fill = "darkblue") +
   coord_flip() +
   theme_minimal() +
@@ -1304,9 +1342,9 @@ outliers_per_sample %>%
 ```{r}
 GRR_glm_fit_df %>%
   filter(outlier_direction == "Above fit") %>%
-  count(sample_id, sort = TRUE) %>%
+  count(condition_id, sort = TRUE) %>%
   top_n(20, n) %>%
-  ggplot(aes(x = reorder(sample_id, n), y = n)) +
+  ggplot(aes(x = reorder(condition_id, n), y = n)) +
   geom_col(fill = "brown") +
   coord_flip() +
   theme_minimal() +
@@ -1325,9 +1363,9 @@ GRR_glm_fit_df %>%
 ```{r}
 GRR_glm_fit_df %>%
   filter(outlier_direction == "Below fit") %>%
-  count(sample_id, sort = TRUE) %>%
+  count(condition_id, sort = TRUE) %>%
   top_n(20, n) %>%
-  ggplot(aes(x = reorder(sample_id, n), y = n)) +
+  ggplot(aes(x = reorder(condition_id, n), y = n)) +
   geom_col(fill = "slateblue") +
   coord_flip() +
   theme_minimal() +
@@ -1345,4 +1383,4 @@ GRR_glm_fit_df %>%
 
 # Conclusion
 
-The DRW shows less outliers and a more 'robust' fit than the EG score. Especially the overquantification is fixed. The underquantification could be better and this will be further assessed by the other topology based scoring methods.
+The DRW shows less outliers and a more 'robust' fit than the EG score on both the GRR and wGRR metric. It will be further assessed using other evaluations if the wDRW is better on other metrics as well.
