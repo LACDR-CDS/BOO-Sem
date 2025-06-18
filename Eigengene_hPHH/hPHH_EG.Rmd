@@ -496,7 +496,6 @@ ggplot(GRR_glm_fit_df, aes(x = eg_score, y = abs(GRR))) +
   )
 ```
 
-
 ### wGRR
 
 ```{r}
