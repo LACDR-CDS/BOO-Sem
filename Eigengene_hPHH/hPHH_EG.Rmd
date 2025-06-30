@@ -483,7 +483,7 @@ ggplot(GRR_glm_fit_df, aes(x = abs(eg_score), y = abs(GRR))) +
 ```
 
 ```{r}
-ggplot(GRR_glm_fit_df, aes(x = eg_score, y = abs(GRR))) +
+p <- ggplot(GRR_glm_fit_df, aes(x = eg_score, y = abs(GRR))) +
   geom_point(aes(color = outlier), alpha = 0.6, size = 0.9) +
   geom_line(aes(y = fitted_GRR), color = "blue", size = 1) +
   scale_color_manual(values = c("black", "red")) +
@@ -494,7 +494,14 @@ ggplot(GRR_glm_fit_df, aes(x = eg_score, y = abs(GRR))) +
     x = "Eigengene Score (EG)",
     y = "Absolute Gene Response Rate (GRR)"
   )
+
+p
 ```
+
+```{r}
+#ggsave("GRR_EG_PHH.pdf", plot = p, width = 6, height = 4)
+```
+
 
 ### wGRR
 
@@ -638,7 +645,7 @@ ggplot(GRR_glm_fit_df, aes(x = abs(eg_score), y = abs(wGRR))) +
 ```
 
 ```{r}
-ggplot(GRR_glm_fit_df, aes(x = eg_score, y = abs(wGRR))) +
+p <- ggplot(GRR_glm_fit_df, aes(x = eg_score, y = abs(wGRR))) +
   geom_point(aes(color = outlier), alpha = 0.6, size = 0.9) +
   geom_line(aes(y = fitted_wGRR), color = "blue", size = 1) +
   scale_color_manual(values = c("black", "red")) +
@@ -649,7 +656,14 @@ ggplot(GRR_glm_fit_df, aes(x = eg_score, y = abs(wGRR))) +
     x = "Eigengene Score (EG)",
     y = "Absolute Weighted Gene Response Rate (wGRR)"
   )
+
+p
 ```
+
+```{r}
+#ggsave("wGRR_EG_PHH.pdf", plot = p, width = 6, height = 4)
+```
+
 
 # Modules and conditions with most significant outliers'
 

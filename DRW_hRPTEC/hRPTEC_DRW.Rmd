@@ -1054,7 +1054,7 @@ ggplot(GRR_glm_fit_df, aes(x = abs(drw_zscore), y = abs(GRR))) +
 ```
 
 ```{r}
-ggplot(GRR_glm_fit_df, aes(x = drw_zscore, y = abs(GRR))) +
+p <- ggplot(GRR_glm_fit_df, aes(x = drw_zscore, y = abs(GRR))) +
   geom_point(aes(color = outlier), alpha = 0.6, size = 0.9) +
   geom_line(aes(y = fitted_GRR), color = "blue", size = 1) +
   scale_color_manual(values = c("black", "red")) +
@@ -1065,7 +1065,14 @@ ggplot(GRR_glm_fit_df, aes(x = drw_zscore, y = abs(GRR))) +
     x = "Weighted Directed Random Walk Score (wDRW)",
     y = "Absolute Gene Response Rate (GRR)"
   )
+
+p
 ```
+
+```{r}
+#ggsave("GRR_wDRW_RPTEC.pdf", plot = p, width = 6, height = 4)
+```
+
 
 This fit shows, visually, less over and under quantification compared to the EG. especially the high EG scores (overquantification) with 0 gene responses are not present. Overall, this scoring shows less randomness than the eg scoring method on the proposed evaluation metric.
 
@@ -1214,7 +1221,7 @@ ggplot(GRR_glm_fit_df, aes(x = abs(drw_zscore), y = abs(wGRR))) +
 ```
 
 ```{r}
-ggplot(GRR_glm_fit_df, aes(x = drw_zscore, y = abs(wGRR))) +
+p <- ggplot(GRR_glm_fit_df, aes(x = drw_zscore, y = abs(wGRR))) +
   geom_point(aes(color = outlier), alpha = 0.6, size = 0.9) +
   geom_line(aes(y = fitted_wGRR), color = "blue", size = 1) +
   scale_color_manual(values = c("black", "red")) +
@@ -1226,6 +1233,11 @@ ggplot(GRR_glm_fit_df, aes(x = drw_zscore, y = abs(wGRR))) +
     y = "Absolute Weighted Gene Response Rate (wGRR)"
   )
 ```
+
+```{r}
+#ggsave("wGRR_wDRW_RPTEC.pdf", plot = p, width = 6, height = 4)
+```
+
 
 This fit shows, visually, less over and under quantification compared to the EG. especially the high EG scores (overquantification) with 0 gene responses are not present. However, the fit still shows some underquantification. But overall, this scoring shows less randomness than the eg scoring method in the proposed
 
